@@ -7,802 +7,941 @@
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <style>
-        /* Custom styles */
-        .dark {
-            --bg-primary: #181818;
-            --bg-secondary: #2d2d2d;
-            --text-primary: #e1e1e1;
-            --text-secondary: #a1a1a1;
-            --accent: #6c6be0;
-            --accent-hover: #8584e2;
-            --border-color: #444444;
-        }
-        
-        html {
-            scroll-behavior: smooth;
-        }
-        
-        .dark body {
-            background-color: var(--bg-primary);
-            color: var(--text-primary);
-        }
-        
-        .dark .dark-card {
-            background-color: var(--bg-secondary);
-            border-color: var(--border-color);
-        }
-        
-        .dark .dark-border {
-            border-color: var(--border-color);
-        }
-        
-        .dark .dark-text {
-            color: var(--text-primary);
-        }
-        
-        .dark .dark-input {
-            background-color: var(--bg-secondary);
-            color: var(--text-primary);
-            border-color: var(--border-color);
-        }
-        
-        .dark .dark-table {
-            border-color: var(--border-color);
-        }
-        
-        .dark .dark-table th {
-            background-color: var(--bg-secondary);
-            color: var(--text-primary);
-            border-color: var(--border-color);
-        }
-        
-        .dark .dark-table td {
-            border-color: var(--border-color);
-        }
-        
-        .dark .dark-hover:hover {
-            background-color: var(--bg-secondary);
-        }
-        
-        .progress-bar {
-            height: 8px;
-            border-radius: 4px;
-            background-color: #e0e0e0;
-            overflow: hidden;
-        }
-        
-        .progress-bar-fill {
-            height: 100%;
-            background-color: #5D5CDE;
-            transition: width 0.3s ease-in-out;
-        }
-        
-        .tab-active {
-            border-bottom: 2px solid #5D5CDE;
-            color: #5D5CDE;
-        }
-        
-        /* Loading spinner */
-        .spinner {
-            border: 4px solid rgba(0, 0, 0, 0.1);
-            width: 36px;
-            height: 36px;
-            border-radius: 50%;
-            border-left-color: #5D5CDE;
-            animation: spin 1s linear infinite;
-        }
-        
-        .dark .spinner {
-            border: 4px solid rgba(255, 255, 255, 0.1);
-            border-left-color: #5D5CDE;
-        }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        /* Toast notification styles */
-        #toast-container {
+        .notification {
             position: fixed;
-            bottom: 20px;
-            right: 20px;
-            z-index: 9999;
-        }
-        
-        .toast {
-            padding: 12px 20px;
-            color: white;
-            border-radius: 4px;
-            margin-bottom: 10px;
-            min-width: 250px;
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            animation: slideIn 0.3s, fadeOut 0.5s 3s forwards;
-        }
-        
-        .toast-success {
-            background-color: #4CAF50;
-        }
-        
-        .toast-error {
-            background-color: #F44336;
-        }
-        
-        .toast-info {
-            background-color: #2196F3;
-        }
-        
-        .toast-warning {
-            background-color: #FF9800;
-        }
-        
-        .toast-close {
-            cursor: pointer;
-            margin-left: 10px;
-            font-weight: bold;
+            top: 1rem;
+            right: 1rem;
+            padding: 1rem;
+            border-radius: 0.5rem;
+            z-index: 40;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            animation: slideIn 0.3s ease-out;
         }
         
         @keyframes slideIn {
-            from { transform: translateX(100%); }
-            to { transform: translateX(0); }
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
         }
         
-        @keyframes fadeOut {
-            from { opacity: 1; }
-            to { opacity: 0; visibility: hidden; }
+        /* Scrollable containers */
+        .scrollable-container {
+            max-height: 50vh;
+            overflow-y: auto;
+            scrollbar-width: thin;
         }
         
-        /* Table scroll styles */
-        .table-container {
-            overflow-x: auto;
-            max-width: 100%;
+        /* For WebKit browsers */
+        .scrollable-container::-webkit-scrollbar {
+            width: 6px;
         }
         
-        /* Prevent long content from breaking layout */
-        .truncate-text {
-            max-width: 200px;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+        .scrollable-container::-webkit-scrollbar-track {
+            background: #f1f1f1;
         }
         
-        /* Meta table styles */
-        .meta-table {
-            width: 100%;
-            border-collapse: collapse;
+        .scrollable-container::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 4px;
         }
         
-        .meta-table th {
-            text-align: left;
-            padding: 6px 8px;
-            background-color: #f3f4f6;
-            font-weight: 500;
-            font-size: 0.875rem;
-        }
-        
-        .meta-table td {
-            padding: 6px 8px;
-            font-size: 0.875rem;
-        }
-        
-        .dark .meta-table th {
-            background-color: #374151;
-        }
-
-        /* Stat Badge Styles */
-        .stat-badge {
-            display: inline-flex;
-            align-items: center;
-            padding: 0.25rem 0.5rem;
-            border-radius: 0.25rem;
-            font-size: 0.75rem;
-            font-weight: 500;
-            line-height: 1;
-            color: #1F2937;
-            background-color: #E5E7EB;
-            margin-right: 0.5rem;
-            margin-bottom: 0.5rem;
-        }
-        
-        .dark .stat-badge {
-            color: #E5E7EB;
-            background-color: #374151;
-        }
-        
-        .stat-badge i {
-            margin-right: 0.25rem;
-        }
-        
-        .stat-badge.terrain {
-            background-color: #DBEAFE;
-            color: #1E40AF;
-        }
-        
-        .dark .stat-badge.terrain {
-            background-color: #1E3A8A;
-            color: #DBEAFE;
-        }
-        
-        .stat-badge.elevation {
-            background-color: #FEF3C7;
-            color: #92400E;
-        }
-        
-        .dark .stat-badge.elevation {
-            background-color: #78350F;
-            color: #FEF3C7;
-        }
-        
-        .stat-badge.difficulty {
-            background-color: #FEE2E2;
-            color: #B91C1C;
-        }
-        
-        .dark .stat-badge.difficulty {
-            background-color: #7F1D1D;
-            color: #FEE2E2;
+        .scrollable-container::-webkit-scrollbar-thumb:hover {
+            background: #555;
         }
     </style>
 </head>
-<body class="min-h-screen bg-gray-50 dark:bg-gray-900">
+<body class="bg-gray-100">
     <div class="container mx-auto px-4 py-8">
-        <!-- Header -->
-        <header class="flex justify-between items-center mb-8">
+        <header class="flex flex-col md:flex-row justify-between items-center mb-8">
             <div>
-                <h1 class="text-3xl font-bold text-gray-900 dark:text-white flex items-center">
-                    <i class="fas fa-bicycle mr-3 text-indigo-600"></i>
-                    Komoot GPX Downloader
-                </h1>
-                <p class="text-gray-600 dark:text-gray-400 mt-1">Download your Komoot tours as GPX files with highlights</p>
+                <h1 class="text-3xl font-bold text-gray-800">Komoot GPX Downloader</h1>
+                <p class="text-gray-600">Download your Komoot tours as GPX files with all POIs</p>
             </div>
-            <div class="flex space-x-2">
-                <button id="toggleHelpBtn" class="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-white">
-                    <i class="fas fa-question-circle mr-1"></i> Help
-                </button>
-                <button id="clearBtn" class="px-4 py-2 rounded-lg bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-white">
-                    <i class="fas fa-trash-alt mr-1"></i> Clear
-                </button>
-            </div>
-        </header>
-
-        <!-- Help Modal (Hidden by default) -->
-        <div id="helpModal" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center hidden">
-            <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-lg max-w-2xl w-full max-h-screen overflow-y-auto">
-                <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-2xl font-bold text-gray-900 dark:text-white">How to Use This Tool</h2>
-                    <button id="closeHelpBtn" class="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">
-                        <i class="fas fa-times text-xl"></i>
+            <div class="mt-4 md:mt-0">
+                <div class="flex space-x-4">
+                    <button id="helpBtn" class="p-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white focus:outline-none">
+                        <i class="fas fa-question-circle mr-1"></i> Help
                     </button>
                 </div>
-                <div class="space-y-4 text-gray-700 dark:text-gray-300">
-                    <h3 class="text-xl font-semibold text-gray-900 dark:text-white">About This Tool</h3>
-                    <p>This tool helps you download your Komoot tours as GPX files. You can download individual tours or all your tours at once, and include highlights as POIs in the GPX files.</p>
-                    
-                    <h3 class="text-xl font-semibold text-gray-900 dark:text-white">Getting Started</h3>
-                    <ol class="list-decimal list-inside space-y-2 ml-4">
-                        <li>Enter your Komoot login information (or use Anonymous mode for public tours)</li>
-                        <li>Specify the Tour ID or choose to download all your tours</li>
-                        <li>Adjust GPX options if needed</li>
-                        <li>Click "Start Processing" to begin the download</li>
-                        <li>View and download results in the Data tab</li>
-                    </ol>
-                    
-                    <h3 class="text-xl font-semibold text-gray-900 dark:text-white">Features</h3>
-                    <ul class="list-disc list-inside space-y-2 ml-4">
-                        <li><b>Tour Selection:</b> Download a specific tour by ID or all your tours</li>
-                        <li><b>Highlights as POIs:</b> Include tour highlights as waypoints in the GPX file</li>
-                        <li><b>Filtering:</b> Filter tours by type (planned or recorded)</li>
-                        <li><b>Anonymous Mode:</b> Download public tours without logging in</li>
-                        <li><b>Tour Browser:</b> View all your tours and select which ones to download</li>
-                    </ul>
-                    
-                    <h3 class="text-xl font-semibold text-gray-900 dark:text-white">Tips</h3>
-                    <ul class="list-disc list-inside space-y-2 ml-4">
-                        <li>To find a Tour ID, go to the tour page on Komoot and look at the URL (e.g., https://www.komoot.com/tour/12345678)</li>
-                        <li>You can browse your tours in the Tour Browser before downloading</li>
-                        <li>Use "Include Highlights as POIs" to add valuable waypoints to your GPX</li>
-                        <li>For bulk downloads, use the "Download All" option with your Komoot login</li>
-                    </ul>
-                </div>
+            </div>
+        </header>
+        
+        <!-- Tab Navigation -->
+        <div class="mb-8">
+            <div class="flex border-b border-gray-300">
+                <button id="configTabBtn" class="px-4 py-2 font-medium text-gray-600 hover:text-gray-800 focus:outline-none border-b-2 border-blue-500">
+                    <i class="fas fa-cog mr-2"></i> Configure
+                </button>
+                <button id="dataTabBtn" class="px-4 py-2 font-medium text-gray-600 hover:text-gray-800 focus:outline-none border-b-2 border-transparent">
+                    <i class="fas fa-table mr-2"></i> Data
+                </button>
             </div>
         </div>
-
-        <!-- Main Content Area -->
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-md p-6 mb-8 dark-card">
-            <!-- Tabs Navigation -->
-            <div class="border-b border-gray-200 dark:border-gray-700 dark-border mb-6">
-                <nav class="flex space-x-4">
-                    <button id="configTab" class="tab-active px-4 py-2 text-gray-700 dark:text-gray-300 dark-text font-medium">Configure</button>
-                    <button id="dataTab" class="px-4 py-2 text-gray-700 dark:text-gray-300 dark-text font-medium">Data</button>
-                    <button id="tourBrowserTab" class="px-4 py-2 text-gray-700 dark:text-gray-300 dark-text font-medium">Tour Browser</button>
-                </nav>
-            </div>
-
-            <!-- Tab Content -->
-            <div id="tabContent">
-                <!-- Configure Tab -->
-                <div id="configContent" class="tab-pane">
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div class="space-y-4">
-                            <h3 class="text-xl font-semibold text-gray-800 dark:text-white">Komoot Access</h3>
-                            
-                            <!-- Authentication Section -->
-                            <div class="mb-4">
-                                <div class="flex items-center mb-2">
-                                    <label class="inline-flex items-center">
-                                        <input type="checkbox" id="anonymousMode" class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4">
-                                        <span class="ml-2 text-gray-700 dark:text-gray-300 dark-text">Use Anonymous Mode (only for public tours)</span>
-                                    </label>
-                                </div>
-                                
-                                <div id="loginFields">
-                                    <div class="mb-3">
-                                        <label class="block text-gray-700 dark:text-gray-300 dark-text mb-1">Komoot Email:</label>
-                                        <input type="email" id="emailInput" placeholder="your.email@example.com" class="w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-base dark-input">
-                                    </div>
-                                    <div>
-                                        <label class="block text-gray-700 dark:text-gray-300 dark-text mb-1">Komoot Password:</label>
-                                        <input type="password" id="passwordInput" placeholder="Your password" class="w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-base dark-input">
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <!-- Tour Selection -->
-                            <div>
-                                <label class="block text-gray-700 dark:text-gray-300 dark-text mb-2">Tour Selection:</label>
-                                <div class="flex space-x-4 mb-2">
-                                    <label class="inline-flex items-center">
-                                        <input type="radio" name="tourSelection" value="specific" checked class="text-indigo-600 focus:ring-indigo-500 h-4 w-4">
-                                        <span class="ml-2 text-gray-700 dark:text-gray-300 dark-text">Specific Tour ID</span>
-                                    </label>
-                                    <label class="inline-flex items-center">
-                                        <input type="radio" name="tourSelection" value="all" class="text-indigo-600 focus:ring-indigo-500 h-4 w-4">
-                                        <span class="ml-2 text-gray-700 dark:text-gray-300 dark-text">All My Tours</span>
-                                    </label>
-                                </div>
-                                
-                                <!-- Tour ID Input -->
-                                <div id="tourIdField">
-                                    <input type="text" id="tourIdInput" placeholder="Enter Tour ID (e.g., 1234567)" class="w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-base dark-input">
-                                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Find the Tour ID in the URL of your Komoot tour (e.g., https://www.komoot.com/tour/1234567)</p>
-                                </div>
-                            </div>
-                            
-                            <!-- GPX Options -->
-                            <div>
-                                <div class="flex items-center mb-2">
-                                    <label class="text-gray-700 dark:text-gray-300 dark-text">GPX Options</label>
-                                    <button id="toggleAdvancedBtn" class="ml-2 text-sm text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300">
-                                        <i class="fas fa-chevron-down"></i> <span>Show Advanced</span>
-                                    </button>
-                                </div>
-                                
-                                <div>
-                                    <label class="inline-flex items-center mb-2">
-                                        <input type="checkbox" id="includePoi" checked class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4">
-                                        <span class="ml-2 text-gray-700 dark:text-gray-300 dark-text">Include Highlights as POIs</span>
-                                    </label>
-                                </div>
-                                
-                                <div>
-                                    <label class="block text-gray-700 dark:text-gray-300 dark-text mb-1">Filter by Type:</label>
-                                    <select id="filterType" class="w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-base dark-input">
-                                        <option value="all">All Tours</option>
-                                        <option value="planned">Planned Tours</option>
-                                        <option value="recorded">Recorded Tours</option>
-                                    </select>
-                                </div>
-                                
-                                <!-- Advanced Options (hidden initially) -->
-                                <div id="advancedOptions" class="mt-4 p-4 bg-gray-50 dark:bg-gray-700 rounded-lg hidden">
-                                    <div class="grid grid-cols-1 gap-4">
-                                        <div>
-                                            <label class="inline-flex items-center">
-                                                <input type="checkbox" id="skipExisting" checked class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4">
-                                                <span class="ml-2 text-gray-700 dark:text-gray-300 dark-text text-sm">Skip existing files</span>
-                                            </label>
-                                        </div>
-                                        
-                                        <div>
-                                            <label class="inline-flex items-center">
-                                                <input type="checkbox" id="idFilename" class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4">
-                                                <span class="ml-2 text-gray-700 dark:text-gray-300 dark-text text-sm">Use only Tour ID for filename</span>
-                                            </label>
-                                        </div>
-                                        
-                                        <div>
-                                            <label class="inline-flex items-center">
-                                                <input type="checkbox" id="addDate" checked class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4">
-                                                <span class="ml-2 text-gray-700 dark:text-gray-300 dark-text text-sm">Add date to filename</span>
-                                            </label>
-                                        </div>
-                                        
-                                        <div>
-                                            <label class="block text-gray-700 dark:text-gray-300 dark-text mb-1 text-sm">Max title length in filename:</label>
-                                            <input type="number" id="maxTitleLength" value="-1" min="-1" class="w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-base dark-input">
-                                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">-1 = no limit, 0 = ID only</p>
-                                        </div>
-                                        
-                                        <div>
-                                            <label class="block text-gray-700 dark:text-gray-300 dark-text mb-1 text-sm">Max description length for POIs:</label>
-                                            <input type="number" id="maxDescLength" value="-1" min="-1" class="w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-base dark-input">
-                                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">-1 = no limit, 0 = no description</p>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            
-                            <!-- Action Buttons -->
-                            <div class="flex space-x-4 pt-2">
-                                <button id="startProcessingBtn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
-                                    <i class="fas fa-play mr-2"></i> Start Processing
-                                </button>
-                            </div>
-                        </div>
-                        
-                        <!-- Status Panel -->
-                        <div class="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg dark-card">
-                            <h3 class="text-xl font-semibold text-gray-800 dark:text-white mb-4">Processing Status</h3>
-                            
-                            <div id="emptyState" class="text-center py-8">
-                                <i class="fas fa-bicycle text-5xl text-gray-300 dark:text-gray-600 mb-4"></i>
-                                <p class="text-gray-500 dark:text-gray-400">Configure options and start processing to see status updates here</p>
-                            </div>
-                            
-                            <div id="processingStatus" class="hidden">
-                                <div class="mb-4">
-                                    <div class="flex justify-between items-center mb-1">
-                                        <span class="text-sm font-medium text-gray-700 dark:text-gray-300 dark-text">Progress</span>
-                                        <span id="progressPercent" class="text-sm text-gray-500 dark:text-gray-400">0%</span>
-                                    </div>
-                                    <div class="progress-bar">
-                                        <div id="progressBar" class="progress-bar-fill" style="width: 0%"></div>
-                                    </div>
-                                </div>
-                                
-                                <div class="grid grid-cols-2 gap-x-4 gap-y-2 mb-4">
-                                    <div>
-                                        <span class="text-sm text-gray-500 dark:text-gray-400">Status:</span>
-                                        <span id="statusState" class="text-sm font-medium text-gray-800 dark:text-white ml-1">-</span>
-                                    </div>
-                                    <div>
-                                        <span class="text-sm text-gray-500 dark:text-gray-400">Tours:</span>
-                                        <span id="statusTours" class="text-sm font-medium text-gray-800 dark:text-white ml-1">0/0</span>
-                                    </div>
-                                    <div>
-                                        <span class="text-sm text-gray-500 dark:text-gray-400">Elapsed:</span>
-                                        <span id="statusTime" class="text-sm font-medium text-gray-800 dark:text-white ml-1">00:00</span>
-                                    </div>
-                                </div>
-                                
-                                <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-md p-3 max-h-48 overflow-y-auto dark-card dark-border">
-                                    <div id="statusLog" class="text-sm font-mono text-gray-700 dark:text-gray-300 dark-text space-y-1"></div>
-                                </div>
-                            </div>
-                        </div>
+        
+        <!-- Configure Tab -->
+        <div id="configTab" class="tab-content">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Configuration Panel (Left) -->
+                <div class="bg-white rounded-lg shadow-md p-6">
+                    <h2 class="text-xl font-semibold text-gray-800 mb-4">Komoot GPX Configuration</h2>
+                    
+                    <div class="mb-4">
+                        <label class="inline-flex items-center">
+                            <input type="checkbox" id="anonymousMode" class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4">
+                            <span class="ml-2 text-gray-700">Anonymous Mode</span>
+                        </label>
+                        <p class="text-xs text-gray-500 mt-1">Use this for public tours without logging in</p>
                     </div>
-                </div>
-                
-                <!-- Data Tab -->
-                <div id="dataContent" class="tab-pane hidden">
-                    <div class="mb-4 flex justify-between items-center">
-                        <h3 class="text-xl font-semibold text-gray-800 dark:text-white">Tour Data</h3>
-                        
-                        <div class="flex space-x-2">
-                            <button id="downloadAllBtn" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:opacity-50" disabled>
-                                <i class="fas fa-download mr-2"></i> Download All
-                            </button>
-                            <div class="relative">
-                                <input id="tableSearch" type="text" placeholder="Search tours..." class="w-64 px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-base dark-input">
-                                <span class="absolute right-3 top-2.5 text-gray-400">
-                                    <i class="fas fa-search"></i>
-                                </span>
-                            </div>
+                    
+                    <div id="loginFields" class="space-y-4 mb-6">
+                        <div>
+                            <label class="block text-gray-700 mb-1">Email</label>
+                            <input type="email" id="emailInput" class="w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500" placeholder="your.email@example.com">
+                        </div>
+                        <div>
+                            <label class="block text-gray-700 mb-1">Password</label>
+                            <input type="password" id="passwordInput" class="w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500" placeholder="Your Komoot password">
                         </div>
                     </div>
                     
-                    <!-- Data Table -->
-                    <div class="table-container overflow-x-auto bg-white dark:bg-gray-800 rounded-lg shadow dark-card">
-                        <table id="toursTable" class="min-w-full divide-y divide-gray-200 dark:divide-gray-700 dark-table">
-                            <thead>
-                                <tr>
-                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 dark-hover" data-sort="name">
-                                        Name <i class="fas fa-sort ml-1"></i>
-                                    </th>
-                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 dark-hover" data-sort="distance">
-                                        Distance <i class="fas fa-sort ml-1"></i>
-                                    </th>
-                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 dark-hover" data-sort="duration">
-                                        Duration <i class="fas fa-sort ml-1"></i>
-                                    </th>
-                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 dark-hover" data-sort="sport">
-                                        Sport <i class="fas fa-sort ml-1"></i>
-                                    </th>
-                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 dark-hover" data-sort="type">
-                                        Type <i class="fas fa-sort ml-1"></i>
-                                    </th>
-                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                                        Actions
-                                    </th>
-                                </tr>
-                            </thead>
-                            <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700 dark-table">
-                                <!-- Table rows will be populated dynamically -->
-                                <tr>
-                                    <td colspan="6" class="px-6 py-10 text-center text-gray-500 dark:text-gray-400">
-                                        No tour data available. Configure and start processing to see results here.
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
+                    <div class="mb-6">
+                        <label class="block text-gray-700 mb-2">Tour Selection</label>
+                        <div class="space-y-2">
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="tourSelection" value="all" class="text-indigo-600 focus:ring-indigo-500 h-4 w-4">
+                                <span class="ml-2 text-gray-700">All My Tours</span>
+                            </label>
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="tourSelection" value="specific" class="text-indigo-600 focus:ring-indigo-500 h-4 w-4" checked>
+                                <span class="ml-2 text-gray-700">Specific Tour ID</span>
+                                <button id="showImportBtn" class="ml-2 text-sm text-indigo-600 hover:text-indigo-800">
+                                    <i class="fas fa-file-import"></i> Import IDs
+                                </button>
+                            </label>
+                        </div>
                     </div>
-
-                    <!-- Tour Details Panel -->
-                    <div id="tourDetails" class="mt-6 bg-gray-50 dark:bg-gray-700 rounded-lg p-4 hidden dark-card">
-                        <div class="flex justify-between items-center mb-4">
-                            <h4 class="text-lg font-semibold text-gray-800 dark:text-white">Tour Details</h4>
-                            <button id="closeDetailsBtn" class="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">
-                                <i class="fas fa-times"></i>
+                    
+                    <div id="tourIdField" class="mb-6">
+                        <label class="block text-gray-700 mb-1">Tour ID</label>
+                        <input type="text" id="tourIdInput" class="w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g. 1234567890">
+                        <p class="text-xs text-gray-500 mt-1">Find the ID in the URL: komoot.com/tour/<strong>1234567890</strong></p>
+                    </div>
+                    
+                    <div id="importTourSection" class="mt-4 hidden">
+                        <label class="block text-gray-700 mb-1">Import Tour IDs:</label>
+                        <textarea id="tourIdsImport" class="w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm" rows="4" placeholder="Enter tour IDs, one per line or comma-separated"></textarea>
+                        <div class="mt-2">
+                            <button id="importToursBtn" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
+                                <i class="fas fa-file-import mr-2"></i> Import Tour IDs
                             </button>
                         </div>
-                        
-                        <div class="grid grid-cols-1 gap-6">
-                            <div class="space-y-4">
-                                <h3 id="detailName" class="text-xl font-bold text-gray-900 dark:text-white">Tour Name</h3>
-                                
-                                <!-- Basic Information -->
-                                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                                    <div>
-                                        <p class="text-sm text-gray-500 dark:text-gray-400">Distance</p>
-                                        <p id="detailDistance" class="font-medium text-gray-900 dark:text-white">-</p>
-                                    </div>
-                                    <div>
-                                        <p class="text-sm text-gray-500 dark:text-gray-400">Duration</p>
-                                        <p id="detailDuration" class="font-medium text-gray-900 dark:text-white">-</p>
-                                    </div>
-                                    <div>
-                                        <p class="text-sm text-gray-500 dark:text-gray-400">Sport</p>
-                                        <p id="detailSport" class="font-medium text-gray-900 dark:text-white">-</p>
-                                    </div>
-                                    <div>
-                                        <p class="text-sm text-gray-500 dark:text-gray-400">Type</p>
-                                        <p id="detailType" class="font-medium text-gray-900 dark:text-white">-</p>
-                                    </div>
-                                </div>
-
-                                <!-- Technical Information -->
-                                <div>
-                                    <p class="text-sm text-gray-500 dark:text-gray-400 mb-2">Elevation</p>
-                                    <div class="flex flex-wrap">
-                                        <div class="stat-badge elevation">
-                                            <i class="fas fa-arrow-up"></i>
-                                            <span id="detailElevationUp" class="font-medium">-</span>
-                                        </div>
-                                        <div class="stat-badge elevation">
-                                            <i class="fas fa-arrow-down"></i>
-                                            <span id="detailElevationDown" class="font-medium">-</span>
-                                        </div>
-                                    </div>
-                                </div>
-                                
-                                <div class="flex flex-wrap space-x-3">
-                                    <a id="detailDownload" href="#" class="inline-flex items-center text-white bg-indigo-600 hover:bg-indigo-700 font-medium py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
-                                        <i class="fas fa-download mr-2"></i> Download GPX
-                                    </a>
-                                    <a id="detailUrl" href="#" target="_blank" class="inline-flex items-center text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300">
-                                        <i class="fas fa-external-link-alt mr-1"></i> View on Komoot
-                                    </a>
-                                </div>
-                            </div>
-                        </div>
                     </div>
-                </div>
-                
-                <!-- Tour Browser Tab -->
-                <div id="tourBrowserContent" class="tab-pane hidden">
-                    <div class="mb-6">
-                        <h3 class="text-xl font-semibold text-gray-800 dark:text-white mb-4">Tour Browser</h3>
-                        
-                        <!-- Login Form for Tour Browser -->
-                        <div class="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg mb-6 dark-card">
-                            <h4 class="text-lg font-medium text-gray-800 dark:text-white mb-3">Login to View Your Tours</h4>
-                            
-                            <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div>
-                                    <label class="block text-gray-700 dark:text-gray-300 dark-text mb-1">Komoot Email:</label>
-                                    <input type="email" id="browserEmailInput" placeholder="your.email@example.com" class="w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-base dark-input">
-                                </div>
-                                <div>
-                                    <label class="block text-gray-700 dark:text-gray-300 dark-text mb-1">Komoot Password:</label>
-                                    <input type="password" id="browserPasswordInput" placeholder="Your password" class="w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-base dark-input">
-                                </div>
-                                <div class="flex items-end">
-                                    <button id="fetchToursBtn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
-                                        <i class="fas fa-sync-alt mr-2"></i> Fetch Tours
-                                    </button>
-                                </div>
-                            </div>
-                            
-                            <div class="mt-3">
-                                <label class="block text-gray-700 dark:text-gray-300 dark-text mb-1">Filter:</label>
-                                <select id="browserFilterType" class="w-40 px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-base dark-input">
+                    
+                    <div id="allToursFields" class="mb-6 hidden">
+                        <div class="flex items-center justify-between">
+                            <div class="w-2/3">
+                                <label class="block text-gray-700 mb-1">Filter by Type</label>
+                                <select id="filterType" class="w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
                                     <option value="all">All Tours</option>
                                     <option value="planned">Planned Tours</option>
                                     <option value="recorded">Recorded Tours</option>
                                 </select>
                             </div>
+                            <div class="w-1/3 pl-2 pt-5">
+                                <button id="checkToursBtn" class="w-full px-3 py-2 text-xs bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-lg focus:outline-none">
+                                    <i class="fas fa-check mr-1"></i> Check Count
+                                </button>
+                            </div>
                         </div>
+                        <div id="totalToursInfo" class="text-sm text-blue-600 mt-2"></div>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <label class="inline-flex items-center">
+                            <input type="checkbox" id="includePoi" class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4" checked>
+                            <span class="ml-2 text-gray-700">Include POIs (Highlights)</span>
+                        </label>
+                        <p class="text-xs text-gray-500 mt-1">Add Komoot highlights as waypoints in the GPX file</p>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <button id="toggleAdvancedBtn" class="text-indigo-600 hover:text-indigo-800 text-sm font-medium focus:outline-none">
+                            <i class="fas fa-caret-right mr-1" id="advancedCaret"></i> Advanced Options
+                        </button>
                         
-                        <!-- Tours List -->
-                        <div id="toursListContainer" class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 dark-card">
-                            <div id="toursList" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                <!-- Tours will be populated here -->
-                                <div class="text-center py-10 col-span-3 text-gray-500 dark:text-gray-400">
-                                    Login and fetch your tours to see them here
+                        <div id="advancedOptions" class="hidden mt-4 space-y-4 border-t border-gray-200 pt-4">
+                            <div>
+                                <label class="inline-flex items-center">
+                                    <input type="checkbox" id="skipExisting" class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4" checked>
+                                    <span class="ml-2 text-gray-700 text-sm">Skip existing files</span>
+                                </label>
+                                <p class="text-xs text-gray-500 mt-1">Don't overwrite files that already exist</p>
+                            </div>
+                            
+                            <div>
+                                <label class="inline-flex items-center">
+                                    <input type="checkbox" id="idFilename" class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4">
+                                    <span class="ml-2 text-gray-700 text-sm">Use ID as filename</span>
+                                </label>
+                                <p class="text-xs text-gray-500 mt-1">Use only the tour ID for the filename</p>
+                            </div>
+                            
+                            <div>
+                                <label class="inline-flex items-center">
+                                    <input type="checkbox" id="addDate" class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4">
+                                    <span class="ml-2 text-gray-700 text-sm">Add date to filename</span>
+                                </label>
+                                <p class="text-xs text-gray-500 mt-1">Prepend YYYY-MM-DD to filename</p>
+                            </div>
+                            
+                            <div>
+                                <label class="block text-gray-700 mb-1 text-sm">Max title length in filename:</label>
+                                <input type="number" id="maxTitleLength" value="-1" min="-1" class="w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-base">
+                                <p class="text-xs text-gray-500 mt-1">Maximum length of tour name in filename (-1 for unlimited)</p>
+                            </div>
+                            
+                            <div>
+                                <label class="block text-gray-700 mb-1 text-sm">Max description length:</label>
+                                <input type="number" id="maxDescLength" value="-1" min="-1" class="w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-base">
+                                <p class="text-xs text-gray-500 mt-1">Maximum length of POI descriptions (-1 for unlimited)</p>
+                            </div>
+                            
+                            <div>
+                                <label class="inline-flex items-center">
+                                    <input type="checkbox" id="downloadImages" class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4">
+                                    <span class="ml-2 text-gray-700 text-sm">Download tour photos</span>
+                                </label>
+                                <p class="text-xs text-gray-500 mt-1">Saves photos from your recorded tours</p>
+                            </div>
+                            
+                            <div>
+                                <label class="block text-gray-700 mb-1 text-sm">Chunk size for large downloads:</label>
+                                <input type="number" id="chunkSizeInput" value="100" min="10" step="10" class="w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-base">
+                                <p class="text-xs text-gray-500 mt-1">For large downloads, process this many tours at once</p>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <button id="startProcessingBtn" class="inline-flex items-center text-white bg-indigo-600 hover:bg-indigo-700 font-medium py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
+                            <i class="fas fa-play mr-2"></i> Start Processing
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Status Panel (Right) -->
+                <div>
+                    <!-- Empty state -->
+                    <div id="emptyState" class="bg-white rounded-lg shadow-md p-6 mb-4 text-center">
+                        <i class="fas fa-route text-6xl text-gray-400 mb-4"></i>
+                        <h3 class="text-xl font-medium text-gray-700">No Tours Processed Yet</h3>
+                        <p class="text-gray-500 mt-2">Configure your settings and click "Start Processing" to begin</p>
+                    </div>
+                    
+                    <!-- Processing status -->
+                    <div id="processingStatus" class="bg-white rounded-lg shadow-md p-6 mb-4 hidden">
+                        <h2 class="text-xl font-semibold text-gray-800 mb-4">Processing Status</h2>
+                        
+                        <div class="mb-4">
+                            <div class="flex justify-between items-center mb-2">
+                                <div>
+                                    <span class="text-gray-700 font-medium">Status:</span>
+                                    <span id="statusState" class="ml-2 text-gray-600">Waiting...</span>
+                                </div>
+                                <div>
+                                    <span class="text-gray-700 font-medium">Time:</span>
+                                    <span id="statusTime" class="ml-2 text-gray-600">00:00</span>
                                 </div>
                             </div>
+                            
+                            <div class="mb-2">
+                                <span class="text-gray-700 font-medium">Tours Processed:</span>
+                                <span id="statusTours" class="ml-2 text-gray-600">0/0</span>
+                            </div>
+                            
+                            <div class="flex items-center">
+                                <div class="w-full bg-gray-200 rounded-full h-2.5">
+                                    <div id="progressBar" class="bg-indigo-600 h-2.5 rounded-full" style="width: 0%"></div>
+                                </div>
+                                <span id="progressPercent" class="text-sm text-gray-500 ml-2">0%</span>
+                            </div>
+                        </div>
+                        
+                        <div id="chunkProgress" class="mt-4 hidden">
+                            <h4 class="text-sm font-medium text-gray-700 mb-2">Chunk Progress</h4>
+                            <div class="flex items-center">
+                                <div class="w-full bg-gray-200 rounded-full h-2.5">
+                                    <div id="chunkProgressBar" class="bg-indigo-600 h-2.5 rounded-full" style="width: 0%"></div>
+                                </div>
+                                <span id="chunkProgressText" class="text-sm text-gray-500 ml-2">0/0</span>
+                            </div>
+                        </div>
+                        
+                        <div class="mt-4">
+                            <h4 class="text-sm font-medium text-gray-700 mb-2">Log</h4>
+                            <div id="statusLog" class="bg-gray-100 rounded p-3 text-xs font-mono text-gray-800 h-64 overflow-y-auto scrollable-container"></div>
+                        </div>
+                        
+                        <div class="mt-4 flex justify-between">
+                            <button id="cancelProcessingBtn" class="inline-flex items-center text-white bg-red-600 hover:bg-red-700 font-medium py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2">
+                                <i class="fas fa-stop mr-2"></i> Cancel
+                            </button>
+                            
+                            <button id="viewResultsBtn" class="inline-flex items-center text-white bg-green-600 hover:bg-green-700 font-medium py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 hidden">
+                                <i class="fas fa-table mr-2"></i> View Results
+                            </button>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
-
-        <!-- Loading Overlay -->
-        <div id="loadingOverlay" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
-            <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-lg flex flex-col items-center dark-card">
-                <div class="spinner mb-4"></div>
-                <p id="loadingMessage" class="text-gray-700 dark:text-gray-300 text-lg font-medium dark-text">Processing your request...</p>
-                <p id="loadingSubMessage" class="text-gray-500 dark:text-gray-400 text-sm mt-1">This may take a moment</p>
+        
+        <!-- Data Tab -->
+        <div id="dataTab" class="tab-content hidden">
+            <div class="bg-white rounded-lg shadow-md p-6 mb-8">
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
+                    <h2 class="text-xl font-semibold text-gray-800 mb-4 md:mb-0">Processed Tours</h2>
+                    
+                    <div class="flex flex-col md:flex-row space-y-2 md:space-y-0 md:space-x-2">
+                        <button id="downloadAllBtn" class="inline-flex items-center text-white bg-green-600 hover:bg-green-700 font-medium py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2">
+                            <i class="fas fa-download mr-2"></i> Download All
+                        </button>
+                        
+                        <button id="clearDataBtn" class="inline-flex items-center text-white bg-red-600 hover:bg-red-700 font-medium py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2">
+                            <i class="fas fa-trash mr-2"></i> Clear Data
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4">
+                    <div class="w-full md:w-1/2 mb-2 md:mb-0">
+                        <input type="text" id="dataSearchInput" placeholder="Search tours..." class="w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
+                    </div>
+                    
+                    <div class="w-full md:w-auto flex space-x-2">
+                        <select id="dataSortField" class="px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
+                            <option value="name">Name</option>
+                            <option value="sport">Sport</option>
+                            <option value="type">Type</option>
+                            <option value="distance_km">Distance</option>
+                            <option value="date">Date</option>
+                        </select>
+                        
+                        <button id="dataSortDirection" class="inline-flex items-center bg-gray-200 hover:bg-gray-300 font-medium py-2 px-3 rounded-lg focus:outline-none">
+                            <i class="fas fa-sort-up text-gray-600"></i>
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Tour list for data tab -->
+                <div class="overflow-x-auto">
+                    <table class="min-w-full bg-white">
+                        <thead>
+                            <tr>
+                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Sport</th>
+                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Distance</th>
+                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Duration</th>
+                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dataTable" class="text-gray-700">
+                            <!-- Tours will be populated here -->
+                        </tbody>
+                    </table>
+                </div>
+                
+                <!-- Empty state for data -->
+                <div id="dataEmptyState" class="text-center py-8">
+                    <i class="fas fa-folder-open text-6xl text-gray-400 mb-4"></i>
+                    <h3 class="text-xl font-medium text-gray-700">No Tours Processed</h3>
+                    <p class="text-gray-500 mt-2">Go to the Configure tab to start processing tours</p>
+                </div>
+            </div>
+            
+            <!-- Tour details panel -->
+            <div id="tourDetails" class="bg-white rounded-lg shadow-md p-6 mb-8 hidden">
+                <h2 class="text-xl font-semibold text-gray-800 mb-4">Tour Details</h2>
+                
+                <h3 id="detailName" class="text-xl font-bold text-gray-800 mb-4">Tour Name</h3>
+                
+                <div class="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
+                    <div>
+                        <h4 class="text-sm font-medium text-gray-500">Distance</h4>
+                        <p id="detailDistance" class="text-lg font-bold text-gray-800">12.5 km</p>
+                    </div>
+                    
+                    <div>
+                        <h4 class="text-sm font-medium text-gray-500">Duration</h4>
+                        <p id="detailDuration" class="text-lg font-bold text-gray-800">1.5 h</p>
+                    </div>
+                    
+                    <div>
+                        <h4 class="text-sm font-medium text-gray-500">Sport</h4>
+                        <p id="detailSport" class="text-lg font-bold text-gray-800">Hiking</p>
+                    </div>
+                    
+                    <div>
+                        <h4 class="text-sm font-medium text-gray-500">Type</h4>
+                        <p id="detailType" class="text-lg font-bold text-gray-800">Recorded</p>
+                    </div>
+                    
+                    <div>
+                        <h4 class="text-sm font-medium text-gray-500">Elevation Up</h4>
+                        <p id="detailElevationUp" class="text-lg font-bold text-gray-800">250 m</p>
+                    </div>
+                    
+                    <div>
+                        <h4 class="text-sm font-medium text-gray-500">Elevation Down</h4>
+                        <p id="detailElevationDown" class="text-lg font-bold text-gray-800">250 m</p>
+                    </div>
+                </div>
+                
+                <div class="flex flex-col md:flex-row gap-4 mt-4">
+                    <a id="detailUrl" href="#" target="_blank" class="inline-flex items-center text-white bg-blue-600 hover:bg-blue-700 font-medium py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
+                        <i class="fas fa-external-link-alt mr-2"></i> Open in Komoot
+                    </a>
+                    
+                    <a id="detailDownload" href="#" class="inline-flex items-center text-white bg-green-600 hover:bg-green-700 font-medium py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2">
+                        <i class="fas fa-download mr-2"></i> Download GPX
+                    </a>
+                </div>
+                
+                <div id="tourImages" class="mt-8 hidden">
+                    <h4 class="text-lg font-semibold text-gray-800 mb-3">Tour Images</h4>
+                    <div id="imageGallery" class="grid grid-cols-2 md:grid-cols-3 gap-4">
+                        <!-- Images will be populated here -->
+                    </div>
+                    <div class="mt-4">
+                        <a id="downloadImagesBtn" href="#" class="inline-flex items-center text-white bg-indigo-600 hover:bg-indigo-700 font-medium py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
+                            <i class="fas fa-images mr-2"></i> Download All Images
+                        </a>
+                    </div>
+                </div>
             </div>
         </div>
-
-        <!-- Toast Container -->
-        <div id="toast-container"></div>
     </div>
-
-    <!-- External Scripts -->
+    
+    <!-- Help Modal -->
+    <div id="helpModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
+        <div class="bg-white rounded-lg shadow-xl p-6 max-w-2xl w-full max-h-screen overflow-y-auto">
+            <div class="flex justify-between items-start mb-4">
+                <h2 class="text-2xl font-bold text-gray-800">Komoot GPX Downloader Help</h2>
+                <button id="closeHelpBtn" class="text-gray-500 hover:text-gray-700">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            
+            <div class="space-y-6 text-gray-700">
+                <div>
+                    <h3 class="text-lg font-semibold mb-2">Overview</h3>
+                    <p>This tool allows you to download your Komoot tours as GPX files, including highlights (POIs) that are normally not included in Komoot's standard export.</p>
+                </div>
+                
+                <div>
+                    <h3 class="text-lg font-semibold mb-2">Getting Started</h3>
+                    <ol class="list-decimal list-inside space-y-2">
+                        <li>Enter your Komoot email and password or use anonymous mode for public tours</li>
+                        <li>Choose to download a specific tour (by ID) or all your tours</li>
+                        <li>Configure any additional options</li>
+                        <li>Click "Start Processing" to begin</li>
+                    </ol>
+                </div>
+                
+                <div>
+                    <h3 class="text-lg font-semibold mb-2">Finding a Tour ID</h3>
+                    <p>The Tour ID is the number in the URL when viewing a tour on Komoot:</p>
+                    <p class="bg-gray-100 p-2 rounded font-mono text-sm mt-2">https://www.komoot.com/tour/1234567890</p>
+                    <p class="mt-2">In this example, <strong>1234567890</strong> is the Tour ID.</p>
+                </div>
+                
+                <div>
+                    <h3 class="text-lg font-semibold mb-2">Download Options</h3>
+                    <ul class="list-disc list-inside space-y-2">
+                        <li><strong>Specific Tour ID:</strong> Download a single tour using its ID</li>
+                        <li><strong>All My Tours:</strong> Download all your tours that match the selected filter type</li>
+                        <li><strong>Check Count:</strong> See how many tours you have before downloading</li>
+                    </ul>
+                </div>
+                
+                <div>
+                    <h3 class="text-lg font-semibold mb-2">Advanced Options</h3>
+                    <ul class="list-disc list-inside space-y-2">
+                        <li><strong>Skip existing files:</strong> Don't overwrite files that already exist</li>
+                        <li><strong>Use ID as filename:</strong> Use only the tour ID for the filename</li>
+                        <li><strong>Add date to filename:</strong> Prepend YYYY-MM-DD to filename</li>
+                        <li><strong>Max title length:</strong> Limit the length of tour names in filenames</li>
+                        <li><strong>Max description length:</strong> Limit the length of POI descriptions</li>
+                        <li><strong>Download tour photos:</strong> Download photos from your recorded tours</li>
+                        <li><strong>Chunk size:</strong> When downloading many tours, process this many at a time</li>
+                    </ul>
+                </div>
+                
+                <div>
+                    <h3 class="text-lg font-semibold mb-2">Anonymous Mode</h3>
+                    <p>Anonymous mode allows you to download public tours without logging in, but only one tour at a time.</p>
+                    <p class="mt-2">Note: You need the exact Tour ID, and the tour must be public.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
     <script>
-        // Check for dark mode preference
-        if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
-            document.documentElement.classList.add('dark');
-        }
-        
-        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', event => {
-            if (event.matches) {
-                document.documentElement.classList.add('dark');
-            } else {
-                document.documentElement.classList.remove('dark');
-            }
-        });
-
         // Global state
         const state = {
             tours: [],
             filteredTours: [],
-            browserTours: [],
             sortField: null,
             sortDirection: 'asc',
             processing: false,
             processingStartTime: null,
             processingTimer: null,
-            activeTab: 'configTab'
+            activeTab: 'configTab',
+            totalToursPlanned: 0,
+            totalToursRecorded: 0,
+            totalToursAll: 0
         };
-
-        // Tab switching logic
-        document.getElementById('configTab').addEventListener('click', () => switchTab('configTab'));
-        document.getElementById('dataTab').addEventListener('click', () => switchTab('dataTab'));
-        document.getElementById('tourBrowserTab').addEventListener('click', () => switchTab('tourBrowserTab'));
-
-        function switchTab(tabId) {
-            // Reset all tabs
-            document.querySelectorAll('button[id$="Tab"]').forEach(tab => {
-                tab.classList.remove('tab-active');
+        
+        // Show notification
+        function showNotification(message, type = 'info') {
+            const notificationEl = document.createElement('div');
+            notificationEl.className = `notification ${type === 'error' ? 'bg-red-500' : type === 'success' ? 'bg-green-500' : 'bg-blue-500'} text-white p-4 rounded-lg`;
+            
+            notificationEl.innerHTML = `
+                <div class="flex items-center">
+                    <i class="fas ${type === 'error' ? 'fa-exclamation-circle' : type === 'success' ? 'fa-check-circle' : 'fa-info-circle'} mr-3 text-lg"></i>
+                    <span>${message}</span>
+                </div>
+            `;
+            
+            document.body.appendChild(notificationEl);
+            
+            // Remove after 5 seconds
+            setTimeout(() => {
+                notificationEl.style.opacity = '0';
+                notificationEl.style.transform = 'translateX(100%)';
+                notificationEl.style.transition = 'all 0.3s ease-out';
+                
+                setTimeout(() => {
+                    notificationEl.remove();
+                }, 300);
+            }, 5000);
+        }
+        
+        // Format tour type
+        function formatTourType(type) {
+            if (!type) return '-';
+            
+            // Convert from API format (tour_planned, tour_recorded) to display format
+            if (type === 'tour_planned') return 'Planned';
+            if (type === 'tour_recorded') return 'Recorded';
+            
+            // Convert first letter to uppercase
+            return type.charAt(0).toUpperCase() + type.slice(1);
+        }
+        
+        // Show tab content
+        function showTab(tabId) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.add('hidden');
             });
             
-            document.querySelectorAll('.tab-pane').forEach(pane => {
-                pane.classList.add('hidden');
+            // Reset all tab buttons
+            document.querySelectorAll('#configTabBtn, #dataTabBtn').forEach(btn => {
+                btn.classList.remove('border-blue-500');
+                btn.classList.add('border-transparent');
             });
             
-            // Activate selected tab
-            document.getElementById(tabId).classList.add('tab-active');
-            document.getElementById(tabId.replace('Tab', 'Content')).classList.remove('hidden');
+            // Show selected tab
+            document.getElementById(tabId).classList.remove('hidden');
             
+            // Highlight the selected tab button
+            document.getElementById(`${tabId}Btn`).classList.remove('border-transparent');
+            document.getElementById(`${tabId}Btn`).classList.add('border-blue-500');
+            
+            // Save active tab to state
             state.activeTab = tabId;
         }
-
-        // Advanced options toggle
-        document.getElementById('toggleAdvancedBtn').addEventListener('click', () => {
-            const advancedOptions = document.getElementById('advancedOptions');
-            const toggleBtn = document.getElementById('toggleAdvancedBtn');
-            const toggleSpan = toggleBtn.querySelector('span');
-            const toggleIcon = toggleBtn.querySelector('i');
-            
-            if (advancedOptions.classList.contains('hidden')) {
-                advancedOptions.classList.remove('hidden');
-                toggleSpan.textContent = 'Hide Advanced';
-                toggleIcon.classList.remove('fa-chevron-down');
-                toggleIcon.classList.add('fa-chevron-up');
-            } else {
-                advancedOptions.classList.add('hidden');
-                toggleSpan.textContent = 'Show Advanced';
-                toggleIcon.classList.remove('fa-chevron-up');
-                toggleIcon.classList.add('fa-chevron-down');
-            }
-        });
-
-        // Help modal toggle
-        document.getElementById('toggleHelpBtn').addEventListener('click', () => {
-            document.getElementById('helpModal').classList.remove('hidden');
-        });
-
-        document.getElementById('closeHelpBtn').addEventListener('click', () => {
-            document.getElementById('helpModal').classList.add('hidden');
-        });
         
-        // Anonymous mode toggle
-        document.getElementById('anonymousMode').addEventListener('change', function() {
-            const loginFields = document.getElementById('loginFields');
-            const allToursRadio = document.querySelector('input[name="tourSelection"][value="all"]');
+        // Add a log entry to the processing status
+        function addLog(message) {
+            const logEl = document.getElementById('statusLog');
+            const entry = document.createElement('div');
             
-            if (this.checked) {
-                // Anonymous mode enabled
-                loginFields.classList.add('hidden');
-                
-                // Disable "All My Tours" option
-                allToursRadio.disabled = true;
-                
-                // If "All My Tours" was selected, switch to "Specific Tour ID"
-                if (allToursRadio.checked) {
-                    document.querySelector('input[name="tourSelection"][value="specific"]').checked = true;
-                    document.getElementById('tourIdField').classList.remove('hidden');
-                }
-            } else {
-                // Anonymous mode disabled
-                loginFields.classList.remove('hidden');
-                
-                // Enable "All My Tours" option
-                allToursRadio.disabled = false;
-            }
-        });
+            // Create timestamp
+            const now = new Date();
+            const hours = now.getHours().toString().padStart(2, '0');
+            const minutes = now.getMinutes().toString().padStart(2, '0');
+            const seconds = now.getSeconds().toString().padStart(2, '0');
+            const timestamp = `${hours}:${minutes}:${seconds}`;
+            
+            // Add log entry
+            entry.textContent = `[${timestamp}] ${message}`;
+            logEl.appendChild(entry);
+            
+            // Scroll to bottom
+            logEl.scrollTop = logEl.scrollHeight;
+        }
         
-        // Tour selection toggle
-        document.querySelectorAll('input[name="tourSelection"]').forEach(radio => {
-            radio.addEventListener('change', function() {
-                const tourIdField = document.getElementById('tourIdField');
+        // Update processing progress
+        function updateProcessingProgress(progress, completed, total) {
+            const progressBar = document.getElementById('progressBar');
+            const progressPercent = document.getElementById('progressPercent');
+            const statusTours = document.getElementById('statusTours');
+            
+            // Update progress bar
+            const progressValue = Math.round(progress * 100);
+            progressBar.style.width = `${progressValue}%`;
+            progressPercent.textContent = `${progressValue}%`;
+            
+            // Update tours counter
+            statusTours.textContent = `${completed}/${total}`;
+        }
+        
+        // Stop processing
+        function stopProcessing() {
+            state.processing = false;
+            
+            // Clear the timer
+            if (state.processingTimer) {
+                clearInterval(state.processingTimer);
+                state.processingTimer = null;
+            }
+            
+            // Enable the start button
+            document.getElementById('startProcessingBtn').disabled = false;
+            document.getElementById('startProcessingBtn').innerHTML = '<i class="fas fa-play mr-2"></i> Start Processing';
+            
+            // Show the view results button
+            document.getElementById('viewResultsBtn').classList.remove('hidden');
+        }
+        
+        // Process the results
+        function processResults(results) {
+            // Save tours to state
+            state.tours = results;
+            state.filteredTours = [...results];
+            
+            // Update the data table
+            updateDataTable();
+            
+            // Hide empty state, show results
+            document.getElementById('dataEmptyState').classList.add('hidden');
+            
+            // Show notification
+            showNotification(`Successfully processed ${results.length} tours`, 'success');
+        }
+        
+        // Update the data table
+        function updateDataTable() {
+            const tableBody = document.getElementById('dataTable');
+            tableBody.innerHTML = '';
+            
+            if (state.filteredTours.length === 0) {
+                document.getElementById('dataEmptyState').classList.remove('hidden');
+                return;
+            }
+            
+            document.getElementById('dataEmptyState').classList.add('hidden');
+            
+            // Create a row for each tour
+            state.filteredTours.forEach(tour => {
+                const row = document.createElement('tr');
+                row.className = 'border-b border-gray-200 hover:bg-gray-100';
+                row.setAttribute('data-tour-id', tour.id);
                 
-                if (this.value === 'specific') {
-                    tourIdField.classList.remove('hidden');
-                } else {
-                    tourIdField.classList.add('hidden');
-                }
+                row.innerHTML = `
+                    <td class="px-4 py-3">${tour.name || '-'}</td>
+                    <td class="px-4 py-3">${tour.sport || '-'}</td>
+                    <td class="px-4 py-3">${formatTourType(tour.type) || '-'}</td>
+                    <td class="px-4 py-3">${tour.distance_km || '-'} km</td>
+                    <td class="px-4 py-3">${tour.duration || '-'} h</td>
+                    <td class="px-4 py-3">${tour.date || '-'}</td>
+                    <td class="px-4 py-3">
+                        <div class="flex space-x-2">
+                            <button class="view-tour-btn text-blue-600 hover:text-blue-800">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                            <a href="/api/download/${tour.id}" class="text-green-600 hover:text-green-800">
+                                <i class="fas fa-download"></i>
+                            </a>
+                            <a href="${tour.url}" target="_blank" class="text-indigo-600 hover:text-indigo-800">
+                                <i class="fas fa-external-link-alt"></i>
+                            </a>
+                        </div>
+                    </td>
+                `;
+                
+                tableBody.appendChild(row);
             });
-        });
-
-        // Start processing function
+            
+            // Add event listeners to view buttons
+            document.querySelectorAll('.view-tour-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const tourId = this.closest('tr').getAttribute('data-tour-id');
+                    showTourDetails(tourId);
+                });
+            });
+            
+            // Make rows clickable to show details
+            document.querySelectorAll('#dataTable tr').forEach(row => {
+                row.addEventListener('click', function(e) {
+                    // Don't trigger if clicking on a button
+                    if (e.target.closest('button') || e.target.closest('a')) {
+                        return;
+                    }
+                    
+                    const tourId = this.getAttribute('data-tour-id');
+                    showTourDetails(tourId);
+                });
+            });
+        }
+        
+        // Show tour details
+        function showTourDetails(tourId) {
+            const tour = state.tours.find(r => r.id === tourId);
+            if (!tour) return;
+            
+            // Update details panel
+            document.getElementById('detailName').textContent = tour.name || 'Unknown tour';
+            document.getElementById('detailDistance').textContent = `${tour.distance_km || '-'} km`;
+            document.getElementById('detailDuration').textContent = `${tour.duration || '-'} h`;
+            document.getElementById('detailSport').textContent = tour.sport || '-';
+            document.getElementById('detailType').textContent = formatTourType(tour.type) || '-';
+            
+            // Format elevation to whole numbers
+            const elevationUp = tour.elevation_up ? Math.floor(parseFloat(tour.elevation_up)) : '-';
+            const elevationDown = tour.elevation_down ? Math.floor(parseFloat(tour.elevation_down)) : '-';
+            
+            document.getElementById('detailElevationUp').textContent = `${elevationUp} m`;
+            document.getElementById('detailElevationDown').textContent = `${elevationDown} m`;
+            
+            // Update links
+            const detailUrl = document.getElementById('detailUrl');
+            const detailDownload = document.getElementById('detailDownload');
+            
+            detailUrl.href = tour.url || '#';
+            detailDownload.href = `/api/download/${tour.id}`;
+            
+            // Show tour images if available
+            showTourImages(tour);
+            
+            // Show details panel
+            document.getElementById('tourDetails').classList.remove('hidden');
+            
+            // Highlight in table
+            highlightTour(tourId);
+        }
+        
+        // Show tour images
+        function showTourImages(tour) {
+            const imageGallery = document.getElementById('imageGallery');
+            const tourImages = document.getElementById('tourImages');
+            const downloadImagesBtn = document.getElementById('downloadImagesBtn');
+            
+            // Check if tour has images
+            if (tour.images && tour.images.length > 0) {
+                // Clear previous images
+                imageGallery.innerHTML = '';
+                
+                // Add each image to the gallery
+                tour.images.forEach(imagePath => {
+                    const imageUrl = `/static/exports/images/${imagePath}`;
+                    
+                    const imageElement = document.createElement('div');
+                    imageElement.className = 'relative group';
+                    imageElement.innerHTML = `
+                        <img src="${imageUrl}" alt="Tour Image" class="w-full h-32 object-cover rounded-lg">
+                        <div class="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                            <a href="${imageUrl}" download class="text-white bg-indigo-600 rounded-full p-2 mx-1">
+                                <i class="fas fa-download"></i>
+                            </a>
+                            <a href="${imageUrl}" target="_blank" class="text-white bg-indigo-600 rounded-full p-2 mx-1">
+                                <i class="fas fa-external-link-alt"></i>
+                            </a>
+                        </div>
+                    `;
+                    
+                    imageGallery.appendChild(imageElement);
+                });
+                
+                // Show the images section
+                tourImages.classList.remove('hidden');
+                
+                // Set up the download all images button
+                downloadImagesBtn.href = `/api/export/images/${tour.id}`;
+            } else {
+                // Hide the images section if no images
+                tourImages.classList.add('hidden');
+            }
+        }
+        
+        // Highlight a tour in the table
+        function highlightTour(tourId) {
+            // Remove highlight from all rows
+            document.querySelectorAll('#dataTable tr').forEach(row => {
+                row.classList.remove('bg-indigo-100');
+            });
+            
+            // Add highlight to the selected row
+            const selectedRow = document.querySelector(`#dataTable tr[data-tour-id="${tourId}"]`);
+            if (selectedRow) {
+                selectedRow.classList.add('bg-indigo-100');
+                
+                // Scroll to the row if needed
+                selectedRow.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+        }
+        
+        // Filter and sort the data table
+        function filterAndSortData() {
+            const searchInput = document.getElementById('dataSearchInput').value.toLowerCase();
+            
+            // Filter tours
+            state.filteredTours = state.tours.filter(tour => {
+                return (
+                    (tour.name && tour.name.toLowerCase().includes(searchInput)) ||
+                    (tour.sport && tour.sport.toLowerCase().includes(searchInput)) ||
+                    (tour.type && formatTourType(tour.type).toLowerCase().includes(searchInput)) ||
+                    (tour.distance_km && tour.distance_km.toString().includes(searchInput)) ||
+                    (tour.date && tour.date.includes(searchInput))
+                );
+            });
+            
+            // Sort tours if sort field is set
+            if (state.sortField) {
+                state.filteredTours.sort((a, b) => {
+                    let valueA = a[state.sortField];
+                    let valueB = b[state.sortField];
+                    
+                    // Handle special cases
+                    if (state.sortField === 'distance_km') {
+                        valueA = parseFloat(valueA) || 0;
+                        valueB = parseFloat(valueB) || 0;
+                    }
+                    
+                    // Perform the comparison
+                    if (valueA < valueB) {
+                        return state.sortDirection === 'asc' ? -1 : 1;
+                    }
+                    if (valueA > valueB) {
+                        return state.sortDirection === 'asc' ? 1 : -1;
+                    }
+                    return 0;
+                });
+            }
+            
+            // Update the table
+            updateDataTable();
+        }
+        
+        // Check total tours for count display
+        async function checkTotalTours() {
+            const email = document.getElementById('emailInput').value.trim();
+            const password = document.getElementById('passwordInput').value.trim();
+            const filterType = document.getElementById('filterType').value;
+            
+            if (!email || !password) {
+                showNotification('Please enter your Komoot email and password', 'error');
+                return;
+            }
+            
+            try {
+                // Disable button while checking
+                const checkButton = document.getElementById('checkToursBtn');
+                checkButton.disabled = true;
+                checkButton.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Checking...';
+                const infoSpan = document.getElementById('totalToursInfo');
+                infoSpan.textContent = 'Checking...';
+                
+                const countResponse = await fetch('/api/tour-counts', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        email: email,
+                        password: password,
+                        filterType: filterType
+                    }),
+                });
+                
+                if (!countResponse.ok) {
+                    const errorData = await countResponse.json();
+                    throw new Error(errorData.error || 'Failed to get tour count');
+                }
+                
+                const countData = await countResponse.json();
+                
+                // Save the tour count based on filter type
+                if (filterType === 'planned') {
+                    state.totalToursPlanned = countData.total_tours;
+                    state.totalToursAll = state.totalToursPlanned;
+                } else if (filterType === 'recorded') {
+                    state.totalToursRecorded = countData.total_tours;
+                    state.totalToursAll = state.totalToursRecorded;
+                } else {
+                    state.totalToursAll = countData.total_tours;
+                }
+                
+                // Update the UI
+                infoSpan.textContent = `Found ${countData.total_tours} tours of type: ${filterType}`;
+                
+                // Re-enable button
+                checkButton.disabled = false;
+                checkButton.innerHTML = '<i class="fas fa-check mr-1"></i> Check Count';
+                
+            } catch (error) {
+                console.error("Error checking tour count:", error);
+                showNotification("Failed to check tour count: " + error.message, "error");
+                
+                // Reset button
+                const checkButton = document.getElementById('checkToursBtn');
+                checkButton.disabled = false;
+                checkButton.innerHTML = '<i class="fas fa-check mr-1"></i> Check Count';
+                document.getElementById('totalToursInfo').textContent = 'Error checking tours';
+            }
+        }
+        
+        // Start processing tours
         async function startProcessing() {
             // Get configuration
             const anonymousMode = document.getElementById('anonymousMode').checked;
             const email = anonymousMode ? '' : document.getElementById('emailInput').value.trim();
             const password = anonymousMode ? '' : document.getElementById('passwordInput').value.trim();
             const tourSelectionType = document.querySelector('input[name="tourSelection"]:checked').value;
-            const tourId = tourSelectionType === 'specific' ? document.getElementById('tourIdInput').value.trim() : 'all';
-            const includePoi = document.getElementById('includePoi').checked;
             const filterType = document.getElementById('filterType').value;
+            const includePoi = document.getElementById('includePoi').checked;
             const skipExisting = document.getElementById('skipExisting').checked;
             const idFilename = document.getElementById('idFilename').checked;
             const addDate = document.getElementById('addDate').checked;
             const maxTitleLength = parseInt(document.getElementById('maxTitleLength').value) || -1;
             const maxDescLength = parseInt(document.getElementById('maxDescLength').value) || -1;
+            const downloadImages = document.getElementById('downloadImages').checked;
+            const chunkSize = parseInt(document.getElementById('chunkSizeInput').value) || 100;
             
-            // Validate input
-            if (tourSelectionType === 'specific' && !tourId) {
-                showNotification('Please enter a tour ID', 'error');
-                return;
+            // Get tour selection based on type
+            let tourId;
+            
+            if (tourSelectionType === 'specific') {
+                tourId = document.getElementById('tourIdInput').value.trim();
+                if (!tourId) {
+                    showNotification('Please enter a tour ID', 'error');
+                    return;
+                }
+            } else {
+                tourId = 'all';
             }
             
+            // Validate input
             if (!anonymousMode && !email) {
                 showNotification('Please enter your Komoot email', 'error');
                 return;
@@ -817,12 +956,14 @@
             document.getElementById('emptyState').classList.add('hidden');
             document.getElementById('processingStatus').classList.remove('hidden');
             document.getElementById('startProcessingBtn').disabled = true;
+            document.getElementById('startProcessingBtn').innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Processing...';
             
-            // Reset status displays
+            // Clear and reset status displays
             document.getElementById('statusState').textContent = 'Starting...';
             document.getElementById('statusTours').textContent = `0/0`;
             document.getElementById('progressBar').style.width = '0%';
             document.getElementById('progressPercent').textContent = '0%';
+            document.getElementById('chunkProgress').classList.add('hidden');
             
             // Clear log
             document.getElementById('statusLog').innerHTML = '';
@@ -838,9 +979,6 @@
                 const seconds = Math.floor((elapsed % 60000) / 1000);
                 document.getElementById('statusTime').textContent = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
             }, 1000);
-            
-            // Show loading overlay
-            showLoading('Processing in progress', 'This may take a few minutes');
             
             try {
                 // Send processing request to the Flask backend
@@ -861,7 +999,9 @@
                         idFilename: idFilename,
                         addDate: addDate,
                         maxTitleLength: maxTitleLength,
-                        maxDescLength: maxDescLength
+                        maxDescLength: maxDescLength,
+                        downloadImages: downloadImages,
+                        chunkSize: chunkSize
                     }),
                 });
                 
@@ -878,14 +1018,11 @@
                 console.error("Error during processing:", err);
                 addLog(`Error: ${err.message}`);
                 stopProcessing();
-                hideLoading();
                 showNotification("Failed to start processing", "error");
             }
         }
-
-        /**
-         * Poll the server for processing status updates
-         */
+        
+        // Poll for processing status
         async function pollProcessingStatus() {
             // Check if we're still processing before continuing
             if (!state.processing) {
@@ -935,13 +1072,12 @@
                     // Stop polling before processing tours
                     stopProcessing();
                     
-                    // Process the tours
+                    // Process the results
                     processResults(tours);
                     return;
                 } else if (data.status === 'error') {
                     addLog(`Error: ${data.error || 'Unknown error occurred'}`);
                     stopProcessing();
-                    hideLoading();
                     showNotification('Processing failed: ' + (data.error || 'Unknown error'), 'error');
                     return;
                 }
@@ -959,500 +1095,210 @@
                 }
             }
         }
-
-        // Process the results
-        function processResults(tours) {
-            if (!Array.isArray(tours) || tours.length === 0) {
-                addLog('No tours found');
-                stopProcessing();
-                hideLoading();
-                showNotification("No tours were found", "warning");
-                return;
-            }
-            
-            addLog(`Found ${tours.length} tours`);
-            
-            // Save tours to state
-            state.tours = tours;
-            state.filteredTours = [...tours];
-            
-            // Update the UI
-            updateToursTable();
-            
-            // Complete the processing
-            addLog('Processing completed successfully');
-            
-            // Update progress bar to 100%
-            updateProcessingProgress(1, tours.length, tours.length);
-            
-            hideLoading();
-            
-            // Enable download button
-            document.getElementById('downloadAllBtn').disabled = false;
-            
-            // Switch to data tab
-            switchTab('dataTab');
-            
-            showNotification(`Successfully processed ${tours.length} tours`, "success");
-        }
-
-        // Update tours table
-        function updateToursTable() {
-            const tableBody = document.querySelector('#toursTable tbody');
-            
-            if (state.filteredTours.length === 0) {
-                tableBody.innerHTML = `
-                    <tr>
-                        <td colspan="6" class="px-6 py-10 text-center text-gray-500 dark:text-gray-400">
-                            No tour data available. Configure and start processing to see results here.
-                        </td>
-                    </tr>
-                `;
-                return;
-            }
-            
-            tableBody.innerHTML = state.filteredTours.map(tour => `
-                <tr class="hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer dark-hover" data-id="${tour.id}">
-                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white truncate-text">${tour.name || '-'}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">${tour.distance_km || '-'} km</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">${tour.duration || '-'} h</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">${tour.sport || '-'}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">${formatTourType(tour.type) || '-'}</td>
-                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                        <a href="/api/download/${tour.id}" class="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300 mr-3">
-                            <i class="fas fa-download"></i>
-                        </a>
-                        <a href="${tour.url}" target="_blank" class="text-indigo-600 hover:text-indigo-900 dark:text-indigo-400 dark:hover:text-indigo-300">
-                            <i class="fas fa-external-link-alt"></i>
-                        </a>
-                    </td>
-                </tr>
-            `).join('');
-            
-            // Add click handlers for table rows
-            document.querySelectorAll('#toursTable tbody tr').forEach(row => {
-                row.addEventListener('click', e => {
-                    // Don't trigger if clicking on links
-                    if (e.target.tagName === 'A' || e.target.tagName === 'I') {
-                        return;
-                    }
-                    
-                    const tourId = row.dataset.id;
-                    showTourDetails(tourId);
-                });
-            });
-        }
-
-        // Show tour details in the detail panel
-        function showTourDetails(tourId) {
-            const tour = state.tours.find(r => r.id === tourId);
-            if (!tour) return;
-            
-            // Update details panel
-            document.getElementById('detailName').textContent = tour.name || 'Unknown tour';
-            document.getElementById('detailDistance').textContent = `${tour.distance_km || '-'} km`;
-            document.getElementById('detailDuration').textContent = `${tour.duration || '-'} h`;
-            document.getElementById('detailSport').textContent = tour.sport || '-';
-            document.getElementById('detailType').textContent = formatTourType(tour.type) || '-';
-            document.getElementById('detailElevationUp').textContent = `${tour.elevation_up || '-'} m`;
-            document.getElementById('detailElevationDown').textContent = `${tour.elevation_down || '-'} m`;
-            
-            // Update links
-            const detailUrl = document.getElementById('detailUrl');
-            const detailDownload = document.getElementById('detailDownload');
-            
-            detailUrl.href = tour.url || '#';
-            detailDownload.href = `/api/download/${tour.id}`;
-            
-            // Show details panel
-            document.getElementById('tourDetails').classList.remove('hidden');
-            
-            // Highlight in table
-            highlightTour(tourId);
-        }
-
-        // Highlight tour in table
-        function highlightTour(tourId) {
-            // Highlight in table
-            document.querySelectorAll('#toursTable tbody tr').forEach(row => {
-                if (row.dataset.id === tourId) {
-                    row.classList.add('bg-indigo-50', 'dark:bg-indigo-900', 'dark:bg-opacity-20');
-                } else {
-                    row.classList.remove('bg-indigo-50', 'dark:bg-indigo-900', 'dark:bg-opacity-20');
-                }
-            });
-        }
-
-        // Apply table search filter
-        function applyTableSearch() {
-            const searchQuery = document.getElementById('tableSearch').value.toLowerCase();
-            
-            if (!searchQuery) {
-                state.filteredTours = [...state.tours];
-                updateToursTable();
-                return;
-            }
-            
-            state.filteredTours = state.tours.filter(tour => {
-                const searchFields = [
-                    tour.name,
-                    tour.sport,
-                    tour.type,
-                    `${tour.distance_km} km`,
-                    `${tour.duration} h`
-                ].map(field => field ? field.toLowerCase() : '');
-                
-                return searchFields.some(field => field.includes(searchQuery));
-            });
-            
-            updateToursTable();
-        }
-
-        // Sort tours
-        function sortTours(field) {
-            // Toggle direction if same field
-            if (state.sortField === field) {
-                state.sortDirection = state.sortDirection === 'asc' ? 'desc' : 'asc';
-            } else {
-                state.sortField = field;
-                state.sortDirection = 'asc';
-            }
-            
-            // Sort tours
-            state.filteredTours.sort((a, b) => {
-                let valueA, valueB;
-                
-                // Extract values based on field
-                if (field === 'name') {
-                    valueA = a.name || '';
-                    valueB = b.name || '';
-                } else if (field === 'distance') {
-                    valueA = parseFloat(a.distance_km) || 0;
-                    valueB = parseFloat(b.distance_km) || 0;
-                } else if (field === 'duration') {
-                    valueA = parseFloat(a.duration) || 0;
-                    valueB = parseFloat(b.duration) || 0;
-                } else if (field === 'sport') {
-                    valueA = a.sport || '';
-                    valueB = b.sport || '';
-                } else if (field === 'type') {
-                    valueA = a.type || '';
-                    valueB = b.type || '';
-                } else {
-                    return 0;
-                }
-                
-                // Compare values
-                if (typeof valueA === 'string') {
-                    const compare = valueA.localeCompare(valueB);
-                    return state.sortDirection === 'asc' ? compare : -compare;
-                } else {
-                    return state.sortDirection === 'asc' ? valueA - valueB : valueB - valueA;
-                }
-            });
-            
-            updateToursTable();
-        }
-
-        // Helper function to format tour type
-        function formatTourType(type) {
-            if (type === 'tour_recorded') {
-                return 'Recorded';
-            } else if (type === 'tour_planned') {
-                return 'Planned';
-            }
-            return type;
-        }
-
-        // Update processing progress
-        function updateProcessingProgress(progress, toursCompleted, toursTotal) {
-            const percent = Math.min(Math.round(progress * 100), 100);
-            document.getElementById('progressBar').style.width = `${percent}%`;
-            document.getElementById('progressPercent').textContent = `${percent}%`;
-            document.getElementById('statusTours').textContent = `${toursCompleted}/${toursTotal || toursCompleted}`;
-        }
-
-        // Add log message
-        function addLog(message) {
-            const log = document.getElementById('statusLog');
-            
-            // Extract timestamp if the message starts with [HH:MM:SS]
-            const timestampMatch = message.match(/^\[(\d{2}:\d{2}:\d{2})\]/);
-            let timeStr, msgText;
-            
-            if (timestampMatch) {
-                timeStr = timestampMatch[1];
-                msgText = message.substring(timestampMatch[0].length).trim();
-            } else {
-                const now = new Date();
-                timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
-                msgText = message;
-            }
-            
-            const logEntry = document.createElement('div');
-            logEntry.innerHTML = `<span class="text-gray-500 dark:text-gray-400">[${timeStr}]</span> ${msgText}`;
-            log.appendChild(logEntry);
-            
-            // Auto-scroll to bottom
-            log.scrollTop = log.scrollHeight;
-        }
-
-        // Stop processing
-        function stopProcessing() {
-            state.processing = false;
-            if (state.processingTimer) {
-                clearInterval(state.processingTimer);
-                state.processingTimer = null;
-            }
-            
-            // Re-enable buttons
-            document.getElementById('startProcessingBtn').disabled = false;
-        }
-
-        // Show loading overlay
-        function showLoading(message, subMessage) {
-            document.getElementById('loadingMessage').textContent = message || 'Processing...';
-            document.getElementById('loadingSubMessage').textContent = subMessage || 'Please wait';
-            document.getElementById('loadingOverlay').classList.remove('hidden');
-        }
-
-        // Hide loading overlay
-        function hideLoading() {
-            const overlay = document.getElementById('loadingOverlay');
-            if (overlay) {
-                overlay.classList.add('hidden');
-            }
-        }
-
-        // Enhanced notification system
-        function showNotification(message, type = 'info') {
-            console.log(`[${type.toUpperCase()}] ${message}`);
-            
-            // Create toast container if it doesn't exist
-            let container = document.getElementById('toast-container');
-            if (!container) {
-                container = document.createElement('div');
-                container.id = 'toast-container';
-                document.body.appendChild(container);
-            }
-            
-            // Create toast element
-            const toast = document.createElement('div');
-            toast.className = `toast toast-${type}`;
-            toast.innerHTML = `
-                <span>${message}</span>
-                <span class="toast-close">&times;</span>
-            `;
-            
-            // Add to container
-            container.appendChild(toast);
-            
-            // Add close event
-            const closeBtn = toast.querySelector('.toast-close');
-            closeBtn.addEventListener('click', () => {
-                toast.remove();
-            });
-            
-            // Auto-remove after 5 seconds
-            setTimeout(() => {
-                if (toast.parentNode) {
-                    toast.remove();
-                }
-            }, 5000);
-        }
-
-        // Fetch tours for the Tour Browser
-        async function fetchTours() {
-            const email = document.getElementById('browserEmailInput').value.trim();
-            const password = document.getElementById('browserPasswordInput').value.trim();
-            const filterType = document.getElementById('browserFilterType').value;
-            
-            if (!email || !password) {
-                showNotification('Please enter your Komoot email and password', 'error');
-                return;
-            }
-            
-            showLoading('Fetching Tours', 'Please wait...');
+        
+        // Clear all processed data
+        async function clearData() {
+            if (!confirm('Are you sure you want to clear all processed tours?')) return;
             
             try {
-                const response = await fetch('/api/list-tours', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        email: email,
-                        password: password,
-                        filterType: filterType
-                    }),
-                });
+                const response = await fetch('/api/clear');
                 
                 if (!response.ok) {
                     const errorData = await response.json();
-                    throw new Error(errorData.error || 'Failed to fetch tours');
+                    throw new Error(errorData.error || 'Failed to clear data');
                 }
                 
-                const tours = await response.json();
-                
-                // Save tours to state
-                state.browserTours = tours;
+                // Clear tours from state
+                state.tours = [];
+                state.filteredTours = [];
                 
                 // Update the UI
-                updateToursList();
+                updateDataTable();
                 
-                hideLoading();
+                // Hide tour details
+                document.getElementById('tourDetails').classList.add('hidden');
                 
-                showNotification(`Found ${tours.length} tours`, 'success');
+                showNotification('Data cleared successfully', 'success');
                 
             } catch (error) {
-                hideLoading();
-                console.error('Error fetching tours:', error);
+                console.error('Error clearing data:', error);
                 showNotification(error.message, 'error');
             }
         }
-
-        // Update tours list in the browser
-        function updateToursList() {
-            const toursList = document.getElementById('toursList');
-            
-            if (state.browserTours.length === 0) {
-                toursList.innerHTML = `
-                    <div class="text-center py-10 col-span-3 text-gray-500 dark:text-gray-400">
-                        No tours found for your account
-                    </div>
-                `;
-                return;
-            }
-            
-            toursList.innerHTML = state.browserTours.map(tour => `
-                <div class="bg-gray-50 dark:bg-gray-700 p-4 rounded-lg dark-card hover:shadow-md transition-shadow">
-                    <h4 class="font-medium text-gray-800 dark:text-white text-lg mb-2 truncate-text">${tour.name}</h4>
-                    <div class="grid grid-cols-2 gap-2 mb-3">
-                        <div>
-                            <p class="text-xs text-gray-500 dark:text-gray-400">Distance</p>
-                            <p class="text-sm font-medium">${tour.distance_km} km</p>
-                        </div>
-                        <div>
-                            <p class="text-xs text-gray-500 dark:text-gray-400">Sport</p>
-                            <p class="text-sm font-medium">${tour.sport}</p>
-                        </div>
-                        <div>
-                            <p class="text-xs text-gray-500 dark:text-gray-400">Type</p>
-                            <p class="text-sm font-medium">${formatTourType(tour.type)}</p>
-                        </div>
-                        <div>
-                            <p class="text-xs text-gray-500 dark:text-gray-400">Date</p>
-                            <p class="text-sm font-medium">${tour.date || 'N/A'}</p>
-                        </div>
-                    </div>
-                    <div class="flex justify-between">
-                        <button class="text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 text-sm select-tour" data-id="${tour.id}">
-                            <i class="fas fa-download mr-1"></i> Download
-                        </button>
-                        <a href="https://www.komoot.com/tour/${tour.id}" target="_blank" class="text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 text-sm">
-                            <i class="fas fa-external-link-alt mr-1"></i> View
-                        </a>
-                    </div>
-                </div>
-            `).join('');
-            
-            // Add click handlers for download buttons
-            document.querySelectorAll('.select-tour').forEach(button => {
-                button.addEventListener('click', () => {
-                    const tourId = button.dataset.id;
-                    selectTourForDownload(tourId);
-                });
-            });
-        }
-
-        // Select a tour from the browser for download
-        function selectTourForDownload(tourId) {
-            // Fill in the tour ID in the configure tab
-            document.getElementById('tourIdInput').value = tourId;
-            
-            // Select "Specific Tour ID" option
-            document.querySelector('input[name="tourSelection"][value="specific"]').checked = true;
-            document.getElementById('tourIdField').classList.remove('hidden');
-            
-            // Switch to configure tab
-            switchTab('configTab');
-            
-            // Scroll to tour ID field
-            document.getElementById('tourIdInput').scrollIntoView({ behavior: 'smooth', block: 'center' });
-            
-            // Flash the tour ID field
-            const tourIdField = document.getElementById('tourIdInput');
-            tourIdField.classList.add('ring-2', 'ring-indigo-500');
-            setTimeout(() => {
-                tourIdField.classList.remove('ring-2', 'ring-indigo-500');
-            }, 1500);
-            
-            showNotification('Tour selected. Click "Start Processing" to download.', 'info');
-        }
-
-        // Event Listeners
+        
+        // Initialize the application
         document.addEventListener('DOMContentLoaded', function() {
-            // Start processing button
-            document.getElementById('startProcessingBtn').addEventListener('click', startProcessing);
+            // Add event listeners
+            document.getElementById('helpBtn').addEventListener('click', function() {
+                document.getElementById('helpModal').classList.remove('hidden');
+            });
             
-            // Clear button
-            document.getElementById('clearBtn').addEventListener('click', function() {
-                if (state.tours.length > 0) {
-                    if (confirm('Are you sure you want to clear all tour data?')) {
-                        fetch('/api/clear')
-                            .then(response => response.json())
-                            .then(data => {
-                                if (data.success) {
-                                    state.tours = [];
-                                    state.filteredTours = [];
-                                    updateToursTable();
-                                    document.getElementById('tourDetails').classList.add('hidden');
-                                    document.getElementById('downloadAllBtn').disabled = true;
-                                    showNotification('All data has been cleared', 'info');
-                                } else {
-                                    showNotification(data.error, 'error');
-                                }
-                            })
-                            .catch(error => {
-                                console.error('Error clearing data:', error);
-                                showNotification('Failed to clear data', 'error');
-                            });
-                    }
-                } else {
-                    showNotification('No data to clear', 'info');
+            document.getElementById('closeHelpBtn').addEventListener('click', function() {
+                document.getElementById('helpModal').classList.add('hidden');
+            });
+            
+            // Close help modal when clicking outside
+            document.getElementById('helpModal').addEventListener('click', function(e) {
+                if (e.target === this) {
+                    this.classList.add('hidden');
                 }
             });
             
-            // Table sorting
-            document.querySelectorAll('th[data-sort]').forEach(header => {
-                header.addEventListener('click', () => {
-                    sortTours(header.dataset.sort);
+            // Anonymous mode toggle
+            document.getElementById('anonymousMode').addEventListener('change', function() {
+                const loginFields = document.getElementById('loginFields');
+                const tourSelection = document.querySelectorAll('input[name="tourSelection"]');
+                
+                if (this.checked) {
+                    loginFields.classList.add('hidden');
+                    
+                    // Force specific tour selection for anonymous mode
+                    tourSelection.forEach(radio => {
+                        radio.disabled = radio.value !== 'specific';
+                        if (radio.value === 'specific') radio.checked = true;
+                    });
+                    
+                    // Show the tour ID field
+                    document.getElementById('tourIdField').classList.remove('hidden');
+                    document.getElementById('allToursFields').classList.add('hidden');
+                } else {
+                    loginFields.classList.remove('hidden');
+                    
+                    // Enable all tour selection options
+                    tourSelection.forEach(radio => {
+                        radio.disabled = false;
+                    });
+                }
+            });
+            
+            // Tour selection change
+            document.querySelectorAll('input[name="tourSelection"]').forEach(radio => {
+                radio.addEventListener('change', function() {
+                    const tourIdField = document.getElementById('tourIdField');
+                    const allToursFields = document.getElementById('allToursFields');
+                    
+                    if (this.value === 'specific') {
+                        tourIdField.classList.remove('hidden');
+                        allToursFields.classList.add('hidden');
+                    } else if (this.value === 'all') {
+                        tourIdField.classList.add('hidden');
+                        allToursFields.classList.remove('hidden');
+                    }
                 });
             });
             
-            // Search input
-            document.getElementById('tableSearch').addEventListener('input', applyTableSearch);
+            // Check total tours button
+            document.getElementById('checkToursBtn').addEventListener('click', checkTotalTours);
             
-            // Close buttons
-            document.getElementById('closeDetailsBtn').addEventListener('click', function() {
-                document.getElementById('tourDetails').classList.add('hidden');
+            // Advanced options toggle
+            document.getElementById('toggleAdvancedBtn').addEventListener('click', function() {
+                const advancedOptions = document.getElementById('advancedOptions');
+                const caret = document.getElementById('advancedCaret');
+                
+                advancedOptions.classList.toggle('hidden');
+                
+                if (advancedOptions.classList.contains('hidden')) {
+                    caret.classList.replace('fa-caret-down', 'fa-caret-right');
+                } else {
+                    caret.classList.replace('fa-caret-right', 'fa-caret-down');
+                }
+            });
+            
+            // Tab navigation
+            document.getElementById('configTabBtn').addEventListener('click', () => showTab('configTab'));
+            document.getElementById('dataTabBtn').addEventListener('click', () => showTab('dataTab'));
+            
+            // Processing buttons
+            document.getElementById('startProcessingBtn').addEventListener('click', () => startProcessing());
+            document.getElementById('cancelProcessingBtn').addEventListener('click', function() {
+                if (confirm('Are you sure you want to cancel processing?')) {
+                    stopProcessing();
+                    addLog('Processing cancelled by user');
+                    showNotification('Processing cancelled', 'info');
+                }
+            });
+            
+            document.getElementById('viewResultsBtn').addEventListener('click', function() {
+                showTab('dataTab');
+            });
+            
+            // Data tab filtering and sorting
+            document.getElementById('dataSearchInput').addEventListener('input', function() {
+                filterAndSortData();
+            });
+            
+            document.getElementById('dataSortField').addEventListener('change', function() {
+                state.sortField = this.value;
+                filterAndSortData();
+            });
+            
+            document.getElementById('dataSortDirection').addEventListener('click', function() {
+                const icon = this.querySelector('i');
+                
+                if (icon.classList.contains('fa-sort-up')) {
+                    icon.classList.replace('fa-sort-up', 'fa-sort-down');
+                    state.sortDirection = 'desc';
+                } else {
+                    icon.classList.replace('fa-sort-down', 'fa-sort-up');
+                    state.sortDirection = 'asc';
+                }
+                
+                filterAndSortData();
             });
             
             // Download all button
             document.getElementById('downloadAllBtn').addEventListener('click', function() {
+                if (state.tours.length === 0) {
+                    showNotification('No tours available to download', 'error');
+                    return;
+                }
+                
                 window.location.href = '/api/export/all';
             });
             
-            // Fetch tours button
-            document.getElementById('fetchToursBtn').addEventListener('click', fetchTours);
+            // Clear data button
+            document.getElementById('clearDataBtn').addEventListener('click', clearData);
             
-            // Browser filter change
-            document.getElementById('browserFilterType').addEventListener('change', fetchTours);
+            // Set default sort field
+            state.sortField = 'name';
+            state.sortDirection = 'asc';
             
-            // Set default values
-            document.getElementById('emailInput').value = '';
-            document.getElementById('passwordInput').value = '';
-            document.getElementById('tourIdInput').value = '';
+            // Import Tour IDs
+            document.getElementById('showImportBtn').addEventListener('click', function() {
+                const importSection = document.getElementById('importTourSection');
+                importSection.classList.toggle('hidden');
+            });
+            
+            document.getElementById('importToursBtn').addEventListener('click', function() {
+                const textarea = document.getElementById('tourIdsImport');
+                const text = textarea.value.trim();
+                
+                if (!text) {
+                    showNotification('Please enter tour IDs to import', 'error');
+                    return;
+                }
+                
+                // Split by newlines or commas
+                const tourIds = text.split(/[\n,]+/).map(id => id.trim()).filter(id => id);
+                
+                if (tourIds.length === 0) {
+                    showNotification('No valid tour IDs found', 'error');
+                    return;
+                }
+                
+                // For now, just take the first one
+                document.getElementById('tourIdInput').value = tourIds[0];
+                
+                // Select "Specific Tour ID" option
+                document.querySelector('input[name="tourSelection"][value="specific"]').checked = true;
+                document.getElementById('tourIdField').classList.remove('hidden');
+                document.getElementById('allToursFields').classList.add('hidden');
+                
+                showNotification(`Imported ${tourIds.length} tour ID(s)`, 'success');
+                
+                // Hide the import section
+                document.getElementById('importTourSection').classList.add('hidden');
+            });
         });
     </script>
 </body>

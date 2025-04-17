@@ -8,6 +8,7 @@ import logging
 from datetime import datetime
 import io
 import sys
+from math import ceil
 
 # Import KomootGPX modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -20,15 +21,22 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__, static_folder='static', template_folder='templates')
 CORS(app)  # Enable CORS for all routes
 
+# Add an error handler for all exceptions
+@app.errorhandler(Exception)
+def handle_error(e):
+    app.logger.error(f"Unhandled exception: {str(e)}")
+    return jsonify({"error": str(e)}), 500
+
 # Global variables to track KomootGPX state
 komoot_status = {
-    'status': 'idle',  # 'idle', 'running', 'completed', 'error'
+    'status': 'idle',  # 'idle', 'running', 'completed', 'error', 'chunk_completed'
     'progress': 0.0,
     'tours_completed': 0,
     'tours_found': 0,
     'error': None,
     'log': [],
-    'results': []
+    'results': [],
+    'next_chunk': 0
 }
 
 # Lock for thread-safe updates to komoot_status
@@ -55,11 +63,14 @@ def reset_status():
         komoot_status['error'] = None
         komoot_status['log'] = []
         komoot_status['results'] = []  # Reset results when starting a new fetch
+        komoot_status['next_chunk'] = 0
 
 def fetch_komoot_tours_thread(email, password, anonymous, tour_selection, filter_type, 
                              include_poi, output_dir, skip_existing, id_filename,
-                             add_date, max_title_length, max_desc_length):
-    """Runs the KomootGPX process in a background thread"""
+                             add_date, max_title_length, max_desc_length,
+                             download_images=False, image_output_dir=None,
+                             chunk_start=0, chunk_size=None):
+    """Runs the KomootGPX process in a background thread with chunking support"""
     try:
         with status_lock:
             komoot_status['status'] = 'running'
@@ -79,22 +90,64 @@ def fetch_komoot_tours_thread(email, password, anonymous, tour_selection, filter
                     komoot_status['error'] = f"Login failed: {str(e)}"
                 return
             
+            # Handle range format in tour_selection
+            # Format can be "start:count" to process a range of tours
+            range_mode = False
+            range_start = 0
+            range_end = 0
+            
+            if isinstance(tour_selection, str) and ":" in tour_selection:
+                try:
+                    range_parts = tour_selection.split(":")
+                    if len(range_parts) == 2:
+                        range_start = int(range_parts[0])
+                        range_count = int(range_parts[1])
+                        range_end = range_start + range_count - 1
+                        range_mode = True
+                        add_log_entry(f"Processing tour range from index {range_start} to {range_end}")
+                except Exception as e:
+                    add_log_entry(f"Error processing range format: {str(e)}. Treating as single tour.")
+            
             # Fetch all tours if requested
-            if tour_selection == "all":
-                add_log_entry(f"Fetching all tours (filter: {filter_type})...")
-                tours = komoot_adapter.fetch_tours(filter_type)
+            if tour_selection == "all" or range_mode:
+                add_log_entry(f"Fetching tours (filter: {filter_type})...")
+                all_tours = komoot_adapter.fetch_tours(filter_type)
+                
+                # Convert to list for easier chunking
+                tour_list = list(all_tours.items())
+                total_tours = len(tour_list)
                 
                 with status_lock:
-                    komoot_status['tours_found'] = len(tours)
-                    
-                add_log_entry(f"Found {len(tours)} tours")
+                    komoot_status['tours_found'] = total_tours
                 
-                # Process each tour
-                total_tours = len(tours)
-                for i, (tour_id, tour) in enumerate(tours.items(), 1):
+                # If range mode, select the specific range
+                if range_mode:
+                    if range_start < total_tours:
+                        range_end = min(range_end, total_tours - 1)
+                        add_log_entry(f"Processing tour index range {range_start} to {range_end} of {total_tours} total tours")
+                        tour_list = tour_list[range_start:range_end + 1]
+                    else:
+                        add_log_entry(f"Error: Start index {range_start} is out of range (max: {total_tours - 1})")
+                        with status_lock:
+                            komoot_status['status'] = 'error'
+                            komoot_status['error'] = f"Start index {range_start} is out of range"
+                        return
+                # Apply chunking if specified and not in range mode
+                elif chunk_size is not None and not range_mode:
+                    chunk_end = min(chunk_start + chunk_size, total_tours)
+                    add_log_entry(f"Processing chunk {chunk_start+1}-{chunk_end} of {total_tours} tours")
+                    tour_list = tour_list[chunk_start:chunk_end]
+                
+                add_log_entry(f"Processing {len(tour_list)} tours in this batch")
+                
+                # Calculate the offset for progress tracking
+                offset = range_start if range_mode else chunk_start
+                
+                # Process each tour in the chunk
+                for i, (tour_id, tour) in enumerate(tour_list, 1):
                     tour_id_str = str(tour_id)
                     
-                    add_log_entry(f"Processing tour {i}/{total_tours}: {tour['name']} (ID: {tour_id_str})")
+                    add_log_entry(f"Processing tour {offset + i}/{total_tours}: {tour['name']} (ID: {tour_id_str})")
                     
                     try:
                         # Generate GPX for this tour
@@ -103,6 +156,16 @@ def fetch_komoot_tours_thread(email, password, anonymous, tour_selection, filter
                             tour, add_date, max_title_length, max_desc_length,
                             return_content=True
                         )
+                        
+                        # Download images if requested
+                        image_paths = []
+                        if download_images and image_output_dir:
+                            try:
+                                add_log_entry(f"Downloading images for tour {tour_id_str}...")
+                                image_paths = komoot_adapter.download_tour_images(tour_id_str, tour, image_output_dir)
+                                add_log_entry(f"Downloaded {len(image_paths)} images for tour {tour_id_str}")
+                            except Exception as img_err:
+                                add_log_entry(f"Error downloading images for tour {tour_id_str}: {str(img_err)}")
                         
                         # Add to results if content was returned
                         if gpx_content:
@@ -119,15 +182,16 @@ def fetch_komoot_tours_thread(email, password, anonymous, tour_selection, filter
                                     'elevation_down': tour['elevation_down'],
                                     'date': tour['date'][:10] if 'date' in tour else '',
                                     'filename': filename,
-                                    'url': f"https://www.komoot.com/tour/{tour_id_str}"
+                                    'url': f"https://www.komoot.com/tour/{tour_id_str}",
+                                    'images': image_paths
                                 })
                     except Exception as e:
                         add_log_entry(f"Error processing tour {tour_id_str}: {str(e)}")
                     
                     # Update progress
                     with status_lock:
-                        komoot_status['tours_completed'] = i
-                        komoot_status['progress'] = i / total_tours
+                        komoot_status['tours_completed'] = offset + i
+                        komoot_status['progress'] = (offset + i) / total_tours
             
             else:
                 # Process a single tour
@@ -150,6 +214,16 @@ def fetch_komoot_tours_thread(email, password, anonymous, tour_selection, filter
                         return_content=True
                     )
                     
+                    # Download images if requested
+                    image_paths = []
+                    if download_images and image_output_dir:
+                        try:
+                            add_log_entry(f"Downloading images for tour {tour_id_str}...")
+                            image_paths = komoot_adapter.download_tour_images(tour_id_str, tour, image_output_dir)
+                            add_log_entry(f"Downloaded {len(image_paths)} images for tour {tour_id_str}")
+                        except Exception as img_err:
+                            add_log_entry(f"Error downloading images for tour {tour_id_str}: {str(img_err)}")
+                    
                     if gpx_content:
                         filename = komoot_adapter.get_last_filename()
                         with status_lock:
@@ -171,7 +245,8 @@ def fetch_komoot_tours_thread(email, password, anonymous, tour_selection, filter
                                 'elevation_down': tour_fetched['elevation_down'],
                                 'date': tour_fetched['date'][:10] if 'date' in tour_fetched else '',
                                 'filename': filename,
-                                'url': f"https://www.komoot.com/tour/{tour_id_str}"
+                                'url': f"https://www.komoot.com/tour/{tour_id_str}",
+                                'images': image_paths
                             })
                 except Exception as e:
                     add_log_entry(f"Error processing tour {tour_id_str}: {str(e)}")
@@ -214,7 +289,8 @@ def fetch_komoot_tours_thread(email, password, anonymous, tour_selection, filter
                             'elevation_down': tour_fetched['elevation_down'],
                             'date': tour_fetched['date'][:10] if 'date' in tour_fetched else '',
                             'filename': filename,
-                            'url': f"https://www.komoot.com/tour/{tour_id_str}"
+                            'url': f"https://www.komoot.com/tour/{tour_id_str}",
+                            'images': []
                         })
             except Exception as e:
                 add_log_entry(f"Error processing tour {tour_id_str}: {str(e)}")
@@ -225,8 +301,17 @@ def fetch_komoot_tours_thread(email, password, anonymous, tour_selection, filter
         
         # Mark as completed
         with status_lock:
-            komoot_status['status'] = 'completed'
-            komoot_status['progress'] = 1.0
+            if (tour_selection == "all" and chunk_size is not None and not range_mode):
+                # If this was a chunk and there's more to process, mark as "chunk_completed"
+                if chunk_start + len(tour_list) < komoot_status['tours_found']:
+                    komoot_status['status'] = 'chunk_completed'
+                    komoot_status['next_chunk'] = chunk_start + len(tour_list)
+                else:
+                    komoot_status['status'] = 'completed'
+                    komoot_status['progress'] = 1.0
+            else:
+                komoot_status['status'] = 'completed'
+                komoot_status['progress'] = 1.0
         
         add_log_entry(f"Process completed successfully. Downloaded {len(komoot_status['results'])} tours.")
         
@@ -247,12 +332,64 @@ def index():
     """Serve the main HTML page"""
     return render_template('index.html')
 
+@app.route('/api/tour-counts', methods=['POST'])
+def get_tour_counts():
+    """Get the count of tours for planning chunked downloads"""
+    try:
+        # Get parameters from request
+        data = request.json
+        if data is None:
+            logger.error("No JSON data received in request")
+            return jsonify({'error': 'No JSON data received'}), 400
+            
+        email = data.get('email', '')
+        password = data.get('password', '')
+        filter_type = data.get('filterType', 'all')
+        
+        logger.info(f"Counting tours for user {email}, filter: {filter_type}")
+        
+        # Translate filter type to KomootGPX format
+        if filter_type == "planned":
+            filter_type = "tour_planned"
+        elif filter_type == "recorded":
+            filter_type = "tour_recorded"
+        
+        # Validate input
+        if not email or not password:
+            return jsonify({'error': 'Email and password are required'}), 400
+            
+        # Login and fetch tours
+        try:
+            logger.info("Logging in to Komoot...")
+            komoot_adapter.login(email, password)
+            logger.info("Logged in successfully, fetching tours...")
+            
+            tours = komoot_adapter.fetch_tours(filter_type)
+            logger.info(f"Found {len(tours)} tours")
+            
+            return jsonify({
+                'total_tours': len(tours),
+                'success': True
+            })
+            
+        except Exception as e:
+            logger.error(f"Error in Komoot operations: {str(e)}")
+            return jsonify({'error': f'Error fetching tour counts: {str(e)}'}), 500
+        
+    except Exception as e:
+        logger.error(f"Error getting tour counts: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/start', methods=['POST'])
 def start_processing():
     """Start the Komoot GPX processing"""
     try:
         # Get parameters from request
         data = request.json
+        if data is None:
+            logger.error("No JSON data received in request")
+            return jsonify({'error': 'No JSON data received'}), 400
+            
         email = data.get('email', '')
         password = data.get('password', '')
         anonymous = data.get('anonymous', False)
@@ -265,6 +402,11 @@ def start_processing():
         add_date = data.get('addDate', False)
         max_title_length = data.get('maxTitleLength', -1)
         max_desc_length = data.get('maxDescLength', -1)
+        download_images = data.get('downloadImages', False)
+        
+        # Chunking parameters
+        chunk_start = data.get('chunkStart', 0)
+        chunk_size = data.get('chunkSize', None)
         
         # Translate filter type to KomootGPX format
         if filter_type == "planned":
@@ -291,15 +433,24 @@ def start_processing():
         # Create output directory
         os.makedirs(output_dir, exist_ok=True)
         
-        # Reset status for new processing job
-        reset_status()
+        # Create images directory if needed
+        image_output_dir = None
+        if download_images:
+            image_output_dir = os.path.join(os.path.dirname(output_dir), 'images')
+            os.makedirs(image_output_dir, exist_ok=True)
+        
+        # If this is a new processing job (not a continued chunk), reset the status
+        if chunk_start == 0:
+            reset_status()
         
         # Start processing in a background thread
         threading.Thread(
             target=fetch_komoot_tours_thread,
             args=(email, password, anonymous, tour_selection, filter_type, 
                  include_poi, output_dir, skip_existing, id_filename, 
-                 add_date, max_title_length, max_desc_length)
+                 add_date, max_title_length, max_desc_length, 
+                 download_images, image_output_dir,
+                 chunk_start, chunk_size)
         ).start()
         
         return jsonify({'success': True, 'message': 'Processing started'})
@@ -319,6 +470,7 @@ def get_status():
             'tours_completed': komoot_status['tours_completed'],
             'tours_found': komoot_status['tours_found'],
             'error': komoot_status['error'],
+            'next_chunk': komoot_status['next_chunk'],
             # Only return new log entries since last request
             'log': komoot_status['log'][-10:] if len(komoot_status['log']) > 10 else komoot_status['log']
         }
@@ -368,6 +520,31 @@ def download_gpx(tour_id):
         logger.error(f"Error downloading GPX: {e}")
         return jsonify({'error': f'Error downloading GPX file: {str(e)}'}), 500
 
+@app.route('/api/download-image/<path:image_path>')
+def download_image(image_path):
+    """Download a specific tour image"""
+    try:
+        # The image path should be relative to the static directory
+        full_path = os.path.join('static/exports/images', image_path)
+        
+        if not os.path.exists(full_path):
+            return jsonify({'error': f'Image file not found: {image_path}'}), 404
+        
+        # Get the directory and filename
+        directory = os.path.dirname(full_path)
+        filename = os.path.basename(full_path)
+        
+        # Return the file for download
+        return send_from_directory(
+            directory,
+            filename,
+            as_attachment=True
+        )
+    
+    except Exception as e:
+        logger.error(f"Error downloading image: {e}")
+        return jsonify({'error': f'Error downloading image file: {str(e)}'}), 500
+
 @app.route('/api/export/all')
 def export_all_gpx():
     """Create a zip file with all GPX files"""
@@ -382,6 +559,16 @@ def export_all_gpx():
                     gpx_file = os.path.join('static/exports/gpx', tour['filename'])
                     if os.path.exists(gpx_file):
                         zf.write(gpx_file, tour['filename'])
+                        
+                        # Include images if any
+                        if 'images' in tour and tour['images']:
+                            # Create a subdirectory for each tour's images
+                            tour_img_dir = os.path.splitext(tour['filename'])[0]
+                            for img_path in tour['images']:
+                                full_img_path = os.path.join('static/exports/images', img_path)
+                                if os.path.exists(full_img_path):
+                                    # Add to zip with a path that includes tour name subdirectory
+                                    zf.write(full_img_path, os.path.join(tour_img_dir, os.path.basename(img_path)))
         
         # Reset file pointer
         memory_file.seek(0)
@@ -401,51 +588,51 @@ def export_all_gpx():
         logger.error(f"Error creating zip archive: {e}")
         return jsonify({'error': f'Error creating zip archive: {str(e)}'}), 500
 
-@app.route('/api/list-tours', methods=['POST'])
-def list_tours():
-    """List all tours for a user"""
+@app.route('/api/export/images/<tour_id>')
+def export_tour_images(tour_id):
+    """Create a zip file with all images for a specific tour"""
     try:
-        # Get parameters from request
-        data = request.json
-        email = data.get('email', '')
-        password = data.get('password', '')
-        filter_type = data.get('filterType', 'all')
+        import zipfile
         
-        # Translate filter type to KomootGPX format
-        if filter_type == "planned":
-            filter_type = "tour_planned"
-        elif filter_type == "recorded":
-            filter_type = "tour_recorded"
+        # Find the tour in results
+        tour = None
+        with status_lock:
+            for t in komoot_status['results']:
+                if t['id'] == tour_id:
+                    tour = t
+                    break
         
-        # Validate input
-        if not email or not password:
-            return jsonify({'error': 'Email and password are required'}), 400
+        if not tour:
+            return jsonify({'error': f'Tour with ID {tour_id} not found in results'}), 404
             
-        # Login and fetch tours
-        try:
-            komoot_adapter.login(email, password)
-            tours = komoot_adapter.fetch_tours(filter_type)
+        if not tour.get('images'):
+            return jsonify({'error': f'No images found for tour {tour_id}'}), 404
             
-            # Convert to list for JSON
-            tour_list = []
-            for tour_id, tour in tours.items():
-                tour_list.append({
-                    'id': str(tour_id),
-                    'name': tour['name'],
-                    'sport': tour['sport'],
-                    'type': tour['type'],
-                    'distance_km': str(int(tour['distance']) / 1000.0),
-                    'date': tour['date'][:10] if 'date' in tour else ''
-                })
-            
-            return jsonify(tour_list)
-            
-        except Exception as e:
-            return jsonify({'error': f'Error fetching tours: {str(e)}'}), 500
+        # Create a zip file in memory
+        memory_file = io.BytesIO()
+        with zipfile.ZipFile(memory_file, 'w') as zf:
+            for img_path in tour['images']:
+                full_img_path = os.path.join('static/exports/images', img_path)
+                if os.path.exists(full_img_path):
+                    zf.write(full_img_path, os.path.basename(img_path))
         
+        # Reset file pointer
+        memory_file.seek(0)
+        
+        # Generate filename
+        filename = f"{tour['name'].replace(' ', '_')}_images.zip"
+        
+        # Return the zip file
+        return send_file(
+            memory_file,
+            as_attachment=True,
+            download_name=filename,
+            mimetype='application/zip'
+        )
+    
     except Exception as e:
-        logger.error(f"Error listing tours: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"Error creating image zip archive: {e}")
+        return jsonify({'error': f'Error creating image zip archive: {str(e)}'}), 500
 
 @app.route('/api/clear')
 def clear_data():
@@ -474,6 +661,9 @@ if __name__ == '__main__':
     
     gpx_dir = os.path.join(exports_dir, 'gpx')
     os.makedirs(gpx_dir, exist_ok=True)
+    
+    img_dir = os.path.join(exports_dir, 'images')
+    os.makedirs(img_dir, exist_ok=True)
     
     # Start the Flask app
     app.run(host='0.0.0.0', port=5001, debug=True)
