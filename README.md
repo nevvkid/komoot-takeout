@@ -198,7 +198,8 @@ Contributions are welcome! If you'd like to improve the project:
 
 ## 📃 License
 
-MIT -- free to use, modify and share.
+This project is licensed under the GNU General Public License v3.0 (GPL-3.0) to comply with the license of the komootGPX library it uses.  
+See [LICENSE](LICENSE) for more information.
 
 ---
 
@@ -209,6 +210,17 @@ MIT -- free to use, modify and share.
 - [Flask](https://flask.palletsprojects.com/) for the web framework
 - [Beautiful Soup](https://www.crummy.com/software/BeautifulSoup/) for HTML parsing
 - [PyInstaller](https://www.pyinstaller.org/) for executable packaging
+
+---
+
+## ⚠ Disclaimer
+
+This project is a personal, non-commercial hobby project and is not affiliated with, endorsed by, or associated with Komoot GmbH in any way.
+
+Use this application at your own risk. The developers take no responsibility for any data loss, account issues, or other problems that may arise from using this software.
+
+All trademarks, logos, and brand names are the property of their respective owners.
+
 
 ---
 
