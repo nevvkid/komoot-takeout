@@ -17,6 +17,18 @@ Built with Flask, PyWebView, and bundled into a native app using PyInstaller.
 
 ---
 
+## 🔎 About This Project
+
+This project is built on top of the excellent [komootGPX](https://github.com/timschneeb/KomootGPX/) library by [timschneeb](https://github.com/timschneeb), which provides the core functionality for downloading GPX tracks from Komoot. Our desktop app provides a user-friendly interface for downloading and managing your Komoot tracks without needing to use the command line.
+
+The application uses:
+- **Flask**: For the backend web server
+- **PyWebView**: To create a native-looking desktop window
+- **Beautiful Soup**: For parsing Komoot web content
+- **PyInstaller**: To package everything into a standalone executable
+
+---
+
 ## 📁 Project Structure
 
 ```
@@ -31,18 +43,6 @@ komoot-exporter/
 ├── requirements.txt         # Project dependencies
 └── venv/                    # Virtual environment (not included in Git)
 ```
-
----
-
-## 🔎 About This Project
-
-This project is built on top of the excellent [komootGPX](https://github.com/timschneeb/KomootGPX/) library by [timschneeb](https://github.com/timschneeb), which provides the core functionality for downloading GPX tracks from Komoot. Our desktop app provides a user-friendly interface for downloading and managing your Komoot tracks without needing to use the command line.
-
-The application uses:
-- **Flask**: For the backend web server
-- **PyWebView**: To create a native-looking desktop window
-- **Beautiful Soup**: For parsing Komoot web content
-- **PyInstaller**: To package everything into a standalone executable
 
 ---
 
