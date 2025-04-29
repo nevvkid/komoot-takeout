@@ -13,6 +13,10 @@ Built with Flask, PyWebView, and bundled into a native app using PyInstaller.
 
 ---
 
+![windows 11 - screenshot](windows11-screenshot.png)
+
+---
+
 ## 📁 Project Structure
 
 ```
