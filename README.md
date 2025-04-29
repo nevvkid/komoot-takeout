@@ -5,7 +5,7 @@
 
 **A simple desktop app to download your Tours & Collections from komoot.**
 
-Additionally to the features of **komootGPX**  with **komoot-takout** you can backup all your precious **Collections** from **komoot**.  
+In addition to **komootGPX** features, **komoot-takeout** lets you back up all your **komoot Collections**.  
 Built with Flask, PyWebView, and bundled into a native app using PyInstaller.
 
 ---
