@@ -10,8 +10,8 @@ Built with Flask, PyWebView, and bundled into a native app using PyInstaller.
 
 ## 🖥 Supported Platforms
 
-- ✅ Windows (.exe)
-- ✅ macOS (.app)
+- ✅ Windows (.exe) download here: [komoot-takeout.exe ](https://github.com/nevvkid/komoot-takeout/raw/1fb58e052c5b06e9c6c1fac2a3e370ed183ce96e/dist/komoot-takeout.exe)
+- ✅ macOS (.app) download here: [komoot-takeout.app(macOS).zip]()
 
 ---
 
@@ -41,6 +41,14 @@ The application uses:
 
 ---
 
+## 📂 Folder Management
+
+At startup, the app creates a default folder in your home directory called "komoot-takeout". You can select a different folder from within the app interface.
+
+All GPX files downloaded from Komoot will be saved to the selected folder. The application remembers your folder choice between sessions.
+
+---
+
 ## 📁 Project Structure
 
 ```
@@ -55,6 +63,36 @@ komoot-exporter/
 ├── requirements.txt         # Project dependencies
 └── venv/                    # Virtual environment (not included in Git)
 ```
+
+---
+
+## 🙏 Acknowledgements
+
+- [komootGPX](https://github.com/timschneeb/KomootGPX/) library by [timschneeb](https://github.com/timschneeb) for the core Komoot API integration
+- [PyWebView](https://pywebview.flowrl.com/) for the desktop window framework
+- [Flask](https://flask.palletsprojects.com/) for the web framework
+- [Beautiful Soup](https://www.crummy.com/software/BeautifulSoup/) for HTML parsing
+- [PyInstaller](https://www.pyinstaller.org/) for executable packaging
+
+---
+
+## 🚀 Contributing
+
+Contributions are welcome! If you'd like to improve the project:
+
+1. Fork the repository
+2. Create a new branch (`git checkout -b feature/improvement`)
+3. Make your changes
+4. Commit your changes (`git commit -am 'Add new feature'`)
+5. Push to the branch (`git push origin feature/improvement`)
+6. Create a new Pull Request
+
+---
+
+## 📃 License
+
+This project is licensed under the GNU General Public License v3.0 (GPL-3.0) to comply with the license of the komootGPX library it uses.  
+See [LICENSE](LICENSE) for more information.
 
 ---
 
@@ -150,14 +188,6 @@ Output will be placed in the `/dist/` folder:
 
 ---
 
-## 📂 Folder Management
-
-At startup, the app creates a default folder in your home directory called "komoot-takeout". You can select a different folder from within the app interface.
-
-All GPX files downloaded from Komoot will be saved to the selected folder. The application remembers your folder choice between sessions.
-
----
-
 ## ⚠ Common Errors
 
 | Problem | Solution |
@@ -180,36 +210,6 @@ The application creates a log file called `komoot_exporter.log` in the directory
 
 - On some Windows systems, you may see a Rectangle.op_Equality error in the logs. This is a known issue with PyWebView and doesn't affect functionality.
 - If you have a firewall or antivirus, it might block the app from accessing the internet. Make sure to allow the app through your firewall.
-
----
-
-## 🚀 Contributing
-
-Contributions are welcome! If you'd like to improve the project:
-
-1. Fork the repository
-2. Create a new branch (`git checkout -b feature/improvement`)
-3. Make your changes
-4. Commit your changes (`git commit -am 'Add new feature'`)
-5. Push to the branch (`git push origin feature/improvement`)
-6. Create a new Pull Request
-
----
-
-## 📃 License
-
-This project is licensed under the GNU General Public License v3.0 (GPL-3.0) to comply with the license of the komootGPX library it uses.  
-See [LICENSE](LICENSE) for more information.
-
----
-
-## 🙏 Acknowledgements
-
-- [komootGPX](https://github.com/jaluebbe/komootgpx) library by jaluebbe for the core Komoot API integration
-- [PyWebView](https://pywebview.flowrl.com/) for the desktop window framework
-- [Flask](https://flask.palletsprojects.com/) for the web framework
-- [Beautiful Soup](https://www.crummy.com/software/BeautifulSoup/) for HTML parsing
-- [PyInstaller](https://www.pyinstaller.org/) for executable packaging
 
 ---
 
