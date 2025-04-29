@@ -3,37 +3,164 @@ import io
 import logging
 import requests
 import time
-from datetime import datetime
-from urllib.parse import urlparse
-from komootgpx.api import KomootApi
-from komootgpx.gpxcompiler import GpxCompiler
+import re
+import base64
+import subprocess
+from datetime import datetime, timedelta
+from urllib.parse import urlparse, parse_qs
+import json
+import csv
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# KomootGPX-style authentication class
+class BasicAuthToken(requests.auth.AuthBase):
+    def __init__(self, key, value):
+        self.key = key
+        self.value = value
+
+    def __call__(self, r):
+        authstr = 'Basic ' + base64.b64encode(bytes(self.key + ":" + self.value, 'utf-8')).decode('utf-8')
+        r.headers['Authorization'] = authstr
+        return r
+
+# Define utility function for sanitizing filenames
+def sanitize_filename(name):
+    """Basic function to sanitize filenames"""
+    if not name:
+        return "unnamed"
+    # Remove characters not allowed in filenames
+    name = re.sub(r'[\\/*?:"<>|]', "", name)
+    # Trim whitespace
+    name = name.strip()
+    # Limit length
+    if len(name) > 100:
+        name = name[:100]
+    return name
+
+try:
+    from bs4 import BeautifulSoup
+    BS4_AVAILABLE = True
+except ImportError:
+    BS4_AVAILABLE = False
+    logger.warning("BeautifulSoup4 not available. Some functions will be limited.")
+    
+try:
+    import gpxpy
+    import gpxpy.gpx
+    GPXPY_AVAILABLE = True
+except ImportError:
+    GPXPY_AVAILABLE = False
+    logger.warning("gpxpy not available. GPX file generation will be limited.")
+
+# Check if KomootGPX is installed
+try:
+    import komootgpx
+    KOMOOTGPX_AVAILABLE = True
+    KOMOOTGPX_VERSION = getattr(komootgpx, '__version__', 'unknown')
+    logger.info(f"KomootGPX library found. Version: {KOMOOTGPX_VERSION}")
+except ImportError:
+    KOMOOTGPX_AVAILABLE = False
+    logger.warning("KomootGPX library not found. Some functions will be limited.")
+
 class KomootAdapter:
     """
-    Adapter class to integrate KomootGPX with Flask
+    Adapter class for Komoot API integration with GPX and collection functionality
     """
     def __init__(self):
-        self.api = KomootApi()
+        self.user_id = None
+        self.token = None
+        self.user_display_name = None
+        self.username = None
+        self.email = None
+        self.session = requests.Session()
+        self.authenticated = False
         self.last_filename = None
         self.last_tour = None
-        self.user_display_name = None
         
+        # Set common headers to look like a browser
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Referer': 'https://www.komoot.com/',
+            'DNT': '1'
+        })
+        
+    def __build_header(self):
+        """Build authentication header similar to KomootGPX"""
+        if self.user_id and self.token:
+            return BasicAuthToken(self.user_id, self.token)
+        return None
+    
+    def __send_request(self, url, auth=None, critical=True, headers=None, method="GET", json_data=None):
+        """Send authenticated request, similar to KomootGPX"""
+        try:
+            request_headers = self.session.headers.copy()
+            if headers:
+                request_headers.update(headers)
+            
+            if method.upper() == "GET":
+                r = self.session.get(url, auth=auth, headers=request_headers)
+            elif method.upper() == "POST":
+                r = self.session.post(url, auth=auth, headers=request_headers, json=json_data)
+            else:
+                raise ValueError(f"Unsupported method: {method}")
+                
+            if r.status_code != 200:
+                error_msg = f"Error {r.status_code}"
+                try:
+                    error_msg += f": {r.json()}"
+                except:
+                    error_msg += f": {r.text}"
+                
+                logger.error(error_msg)
+                if critical:
+                    raise Exception(error_msg)
+            return r
+        except Exception as e:
+            if critical:
+                raise e
+            else:
+                logger.error(f"Request error: {str(e)}")
+                return None
+    
     def login(self, email, password):
-        """Login to Komoot"""
+        """Login to Komoot with KomootGPX's method"""
         try:
             logger.info(f"Logging in to Komoot as {email}")
-            self.api.login(email, password)
-            # Save display name for future reference
-            if hasattr(self.api, 'user_display_name'):
-                self.user_display_name = self.api.user_display_name
+            print("Logging in...")
+            
+            # Save email for reference
+            self.email = email
+            
+            # Use KomootGPX's login strategy
+            r = self.__send_request(f"https://api.komoot.de/v006/account/email/{email}/",
+                              BasicAuthToken(email, password))
+            
+            if r.status_code != 200:
+                raise Exception(f"Login failed with status code: {r.status_code}")
+            
+            # Extract authentication data from response
+            response_data = r.json()
+            self.user_id = response_data['username']
+            self.token = response_data['password']
+            self.user_display_name = response_data['user']['displayname']
+            
+            # Extract username for URL construction if available
+            if 'username' in response_data['user']:
+                self.username = response_data['user']['username']
             else:
-                # Try to extract display name from API response if possible
-                self.user_display_name = "Komoot User"
+                # Try to infer a username from the display name
+                self.username = re.sub(r'[^a-zA-Z0-9_]', '', self.user_display_name.lower().replace(' ', '_'))
+            
+            print(f"Logged in as '{self.user_display_name}'")
+            self.authenticated = True
             logger.info(f"Login successful as {self.get_display_name()}")
+            return True
+            
         except Exception as e:
             logger.error(f"Login failed: {str(e)}")
             raise Exception(f"Komoot login failed: {str(e)}")
@@ -42,38 +169,724 @@ class KomootAdapter:
         """Get the display name of the logged-in user"""
         if self.user_display_name:
             return self.user_display_name
-        return "Unknown User"
+        return "Komoot User"
+    
+    def get_user_id(self):
+        """Get the user ID from the API if available"""
+        return self.user_id
+        
+    def get_username(self):
+        """Get the username for URL construction"""
+        if self.username:
+            return self.username
+        elif self.user_display_name:
+            # Try to convert display name to a username format
+            username = re.sub(r'[^a-zA-Z0-9_]', '', self.user_display_name.lower().replace(' ', '_'))
+            return username
+        return None
     
     def fetch_tours(self, tour_type="all", silent=False):
-        """Fetch tours from Komoot"""
+        """Fetch tours from Komoot using KomootGPX's method"""
         try:
-            logger.info(f"Fetching tours with filter: {tour_type}, silent: {silent}")
-            tours = self.api.fetch_tours(tourType=tour_type, silent=silent)
-            logger.info(f"Successfully fetched {len(tours)} tours")
-            return tours
+            if not silent:
+                logger.info(f"Fetching tours with filter: {tour_type}, silent: {silent}")
+                print(f"Fetching tours of user '{self.user_id}'...")
+            
+            results = {}
+            has_next_page = True
+            current_uri = f"https://api.komoot.de/v007/users/{self.user_id}/tours/"
+            
+            while has_next_page:
+                r = self.__send_request(current_uri, self.__build_header())
+                
+                has_next_page = '_links' in r.json() and 'next' in r.json()['_links'] and 'href' in r.json()['_links']['next']
+                if has_next_page:
+                    current_uri = r.json()['_links']['next']['href']
+                
+                tours = r.json()['_embedded']['tours']
+                for tour in tours:
+                    if tour_type != "all" and tour_type != tour['type']:
+                        continue
+                    results[tour['id']] = tour
+            
+            if not silent:
+                print(f"Found {len(results)} tours")
+                logger.info(f"Successfully fetched {len(results)} tours")
+            
+            return results
+            
         except Exception as e:
             logger.error(f"Error fetching tours: {str(e)}")
             raise Exception(f"Failed to fetch tours: {str(e)}")
     
-    def fetch_tour(self, tour_id, retries=3):
-        """Fetch a tour with retry capability"""
+    def fetch_tour(self, tour_id, retries=3, anonymous=False):
+        """Fetch a tour with KomootGPX's method"""
         attempt = 0
         last_error = None
         
         while attempt < retries:
             try:
-                logger.info(f"Fetching tour {tour_id} (attempt {attempt+1}/{retries})")
-                tour = self.api.fetch_tour(str(tour_id))
-                logger.info(f"Successfully fetched tour {tour_id}")
-                return tour
+                logger.info(f"Fetching tour {tour_id} (attempt {attempt+1}/{retries}), anonymous: {anonymous}")
+                print(f"Fetching tour '{tour_id}'...")
+                
+                # For anonymous mode, try direct request without auth
+                if anonymous:
+                    # Try to fetch the tour data directly from API
+                    r = self.__send_request(f"https://api.komoot.de/v007/tours/{tour_id}?_embedded=coordinates,way_types,"
+                                          f"surfaces,directions,participants,"
+                                          f"timeline&directions=v2&fields"
+                                          f"=timeline&format=coordinate_array"
+                                          f"&timeline_highlights_fields=tips,"
+                                          f"recommenders", critical=False)
+                    
+                    if r and r.status_code == 200:
+                        logger.info(f"Successfully fetched tour {tour_id} anonymously")
+                        return r.json()
+                    else:
+                        # Try web page scraping as fallback
+                        logger.info(f"API failed for anonymous mode, trying HTML scraping")
+                        tour_data = self._scrape_tour_page(tour_id)
+                        if tour_data:
+                            return tour_data
+                else:
+                    # Use authenticated request
+                    r = self.__send_request(f"https://api.komoot.de/v007/tours/{tour_id}?_embedded=coordinates,way_types,"
+                                          f"surfaces,directions,participants,"
+                                          f"timeline&directions=v2&fields"
+                                          f"=timeline&format=coordinate_array"
+                                          f"&timeline_highlights_fields=tips,"
+                                          f"recommenders",
+                                        self.__build_header())
+                    
+                    logger.info(f"Successfully fetched tour {tour_id}")
+                    return r.json()
+                
             except Exception as e:
                 last_error = e
                 logger.error(f"Error fetching tour (attempt {attempt+1}/{retries}): {str(e)}")
                 attempt += 1
                 time.sleep(1)  # Wait between retries
         
-        # If we got here, all retries failed
-        raise Exception(f"Failed to fetch tour after {retries} attempts: {last_error}")
+        # If all retries failed, re-raise the last error
+        logger.error(f"Failed to fetch tour after {retries} attempts: {str(last_error)}")
+        raise Exception(f"Failed to fetch tour: {str(last_error)}")
+    
+    def _scrape_tour_page(self, tour_id):
+        """Scrape a tour page to get basic information (for anonymous mode)"""
+        if not BS4_AVAILABLE:
+            logger.warning("BeautifulSoup4 not available, cannot scrape tour page")
+            return None
+            
+        try:
+            url = f"https://www.komoot.com/tour/{tour_id}"
+            response = requests.get(url, headers=self.session.headers)
+            
+            if response.status_code != 200:
+                logger.warning(f"Failed to access tour page: {response.status_code}")
+                return None
+                
+            # Parse the HTML
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Extract basic tour information
+            tour_data = {
+                'id': tour_id,
+                'name': f"Tour {tour_id}"
+            }
+            
+            # Try to get the title
+            title_elem = soup.find('h1', class_='headline')
+            if title_elem:
+                tour_data['name'] = title_elem.text.strip()
+            
+            # Try to get stats
+            stats_elem = soup.select('.tour-stats__value')
+            if stats_elem:
+                for stat in stats_elem:
+                    label = stat.find_previous('div', class_='tour-stats__label')
+                    if label and stat:
+                        key = label.text.strip().lower()
+                        value = stat.text.strip()
+                        
+                        if 'distance' in key:
+                            # Extract numeric value
+                            match = re.search(r'([\d.,]+)', value)
+                            if match:
+                                try:
+                                    distance_km = float(match.group(1).replace(',', '.'))
+                                    tour_data['distance'] = distance_km * 1000  # Convert to meters
+                                    tour_data['distance_km'] = distance_km
+                                except:
+                                    pass
+                        elif 'elevation' in key and 'up' in key:
+                            # Extract numeric value
+                            match = re.search(r'([\d.,]+)', value)
+                            if match:
+                                try:
+                                    tour_data['elevation_up'] = int(match.group(1).replace(',', '.'))
+                                except:
+                                    pass
+                        elif 'elevation' in key and 'down' in key:
+                            # Extract numeric value
+                            match = re.search(r'([\d.,]+)', value)
+                            if match:
+                                try:
+                                    tour_data['elevation_down'] = int(match.group(1).replace(',', '.'))
+                                except:
+                                    pass
+                        elif 'duration' in key:
+                            # Extract hours and minutes
+                            hours_match = re.search(r'(\d+)h', value)
+                            minutes_match = re.search(r'(\d+)min', value)
+                            
+                            hours = int(hours_match.group(1)) if hours_match else 0
+                            minutes = int(minutes_match.group(1)) if minutes_match else 0
+                            
+                            # Calculate total seconds
+                            duration_seconds = (hours * 60 * 60) + (minutes * 60)
+                            tour_data['duration'] = duration_seconds
+            
+            # Try to get sport type
+            sport_elem = soup.select('.tour-type')
+            if sport_elem and len(sport_elem) > 0:
+                tour_data['sport'] = sport_elem[0].text.strip().lower()
+            
+            # Try to get date
+            date_elem = soup.select('.tour-stats__date')
+            if date_elem and len(date_elem) > 0:
+                date_text = date_elem[0].text.strip()
+                try:
+                    # Parse the date string
+                    date_obj = datetime.strptime(date_text, '%d.%m.%Y')
+                    tour_data['date'] = date_obj.strftime('%Y-%m-%dT%H:%M:%S.000Z')
+                except:
+                    pass
+            
+            self.last_tour = tour_data
+            return tour_data
+            
+        except Exception as e:
+            logger.error(f"Error scraping tour page: {str(e)}")
+            return None
+    
+    def fetch_highlight_tips(self, highlight_id):
+        """Fetch highlight tips as in KomootGPX"""
+        try:
+            logger.info(f"Fetching highlight {highlight_id}")
+            print(f"Fetching highlight '{highlight_id}'...")
+            
+            r = self.__send_request(f"https://api.komoot.de/v007/highlights/{highlight_id}/tips/",
+                                  self.__build_header(), critical=False)
+            
+            return r.json()
+            
+        except Exception as e:
+            logger.warning(f"Error fetching highlight tips: {str(e)}")
+            return {"_embedded": {"items": []}}  # Return empty tips as fallback
+    
+    def extract_collections_from_page(self, page_html, collection_type):
+        """
+        Extract collections from a page HTML
+        
+        Args:
+            page_html: HTML content of the page
+            collection_type: Type of collection (personal or saved)
+            
+        Returns:
+            List of collection objects with basic info
+        """
+        if not BS4_AVAILABLE:
+            raise Exception("BeautifulSoup4 is not installed. Please install it with: pip install beautifulsoup4")
+            
+        collections = []
+        soup = BeautifulSoup(page_html, 'html.parser')
+        
+        # Find all collection cards or links
+        collection_elements = soup.select('.collection-card')
+        
+        if not collection_elements:
+            # Try alternate selectors
+            collection_elements = soup.select('.tw-mb-8')
+            
+        if not collection_elements:
+            # Try to find by collection links directly
+            collection_elements = soup.find_all('a', href=re.compile(r'/collection/\d+'))
+        
+        logger.info(f"Found {len(collection_elements)} {collection_type} collection elements")
+        
+        for element in collection_elements:
+            try:
+                # Find collection link
+                link = None
+                if element.name == 'a' and '/collection/' in element.get('href', ''):
+                    link = element
+                else:
+                    link = element.find('a', href=re.compile(r'/collection/\d+'))
+                
+                if not link or not link.get('href'):
+                    continue
+                    
+                # Extract collection ID from URL
+                href = link.get('href', '')
+                match = re.search(r'/collection/(\d+)', href)
+                if not match:
+                    continue
+                    
+                collection_id = match.group(1)
+                
+                # Get collection name
+                name_element = element.select_one('.collection-card__title')
+                if not name_element:
+                    # Try alternate selectors
+                    name_element = element.find('h3') or element.find('h2') or element.find('h4')
+                    
+                collection_name = f"Collection {collection_id}"
+                if name_element:
+                    collection_name = name_element.text.strip()
+                
+                # Get URL
+                collection_url = href if href.startswith('http') else f"https://www.komoot.com{href}"
+                
+                # Get tour count if available
+                tour_count = 0
+                count_element = element.select_one('.collection-card__tours-count')
+                if count_element:
+                    count_text = count_element.text.strip()
+                    count_match = re.search(r'(\d+)', count_text)
+                    if count_match:
+                        tour_count = int(count_match.group(1))
+                
+                # Create collection object
+                collection = {
+                    'id': collection_id,
+                    'name': collection_name,
+                    'url': collection_url,
+                    'type': collection_type,
+                    'tours_count': tour_count
+                }
+                
+                collections.append(collection)
+                
+            except Exception as e:
+                logger.error(f"Error processing collection element: {str(e)}")
+        
+        return collections
+        
+    def extract_tours_from_collection_page(self, page_url):
+        """Extract tours from a collection page URL"""
+        try:
+            response = self.__send_request(page_url, critical=False)
+            if not response or response.status_code != 200:
+                logger.warning(f"Failed to fetch page {page_url}: HTTP {response.status_code if response else 'None'}")
+                return []
+                
+            soup = BeautifulSoup(response.text, 'html.parser')
+            tours = []
+            
+            # Track unique tour IDs to prevent duplicates
+            tour_ids_seen = set()
+            
+            # Find all tour cards
+            tour_cards = soup.select('.tour-card')
+            
+            if not tour_cards:
+                # Try alternate selectors
+                tour_cards = soup.select('.collection-tour-card')
+                
+            if not tour_cards:
+                # Try to find all tour links
+                tour_cards = soup.find_all('a', href=re.compile(r'/tour/\d+'))
+                
+            logger.info(f"Found {len(tour_cards)} tour cards on page {page_url}")
+            
+            for card in tour_cards:
+                try:
+                    # Find the link to the tour
+                    link = None
+                    if card.name == 'a' and '/tour/' in card.get('href', ''):
+                        link = card
+                    else:
+                        link = card.find('a', href=re.compile(r'/tour/\d+'))
+                    
+                    if not link or not link.get('href'):
+                        continue
+                        
+                    # Extract tour ID
+                    href = link.get('href', '')
+                    match = re.search(r'/tour/(\d+)', href)
+                    if not match:
+                        continue
+                        
+                    tour_id = match.group(1)
+                    
+                    # Skip if we already have this tour
+                    if tour_id in tour_ids_seen:
+                        continue
+                        
+                    tour_ids_seen.add(tour_id)
+                    
+                    # Get tour name
+                    name_element = card.select_one('.tour-card__title')
+                    if not name_element:
+                        # Try alternate selectors
+                        name_element = card.find('h3') or card.find('h4') or card.find('h2')
+                        
+                    tour_name = f"Tour {tour_id}"
+                    if name_element:
+                        tour_name = name_element.text.strip()
+                    
+                    # Get full URL
+                    tour_url = href if href.startswith('http') else f"https://www.komoot.com{href}"
+                    
+                    # Extract any available statistics
+                    tour_data = {
+                        'id': tour_id,
+                        'name': tour_name,
+                        'url': tour_url
+                    }
+                    
+                    # Try to extract distance
+                    distance_element = card.select_one('.tour-card__distance')
+                    if distance_element:
+                        distance_text = distance_element.text.strip()
+                        distance_match = re.search(r'([\d.,]+)', distance_text)
+                        if distance_match:
+                            try:
+                                distance_km = float(distance_match.group(1).replace(',', '.'))
+                                tour_data['distance_km'] = distance_km
+                                tour_data['distance'] = distance_km * 1000  # Convert to meters
+                            except:
+                                pass
+                    
+                    # Try to extract duration
+                    duration_element = card.select_one('.tour-card__duration')
+                    if duration_element:
+                        duration_text = duration_element.text.strip()
+                        hours_match = re.search(r'(\d+)h', duration_text)
+                        minutes_match = re.search(r'(\d+)min', duration_text)
+                        
+                        hours = int(hours_match.group(1)) if hours_match else 0
+                        minutes = int(minutes_match.group(1)) if minutes_match else 0
+                        
+                        # Calculate total seconds
+                        duration_seconds = (hours * 60 * 60) + (minutes * 60)
+                        tour_data['duration'] = duration_seconds
+                    
+                    # Try to extract sport type
+                    sport_element = card.select_one('.tour-card__sport-type')
+                    if sport_element:
+                        tour_data['sport'] = sport_element.text.strip().lower()
+                    
+                    tours.append(tour_data)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing tour card: {str(e)}")
+            
+            return tours
+            
+        except Exception as e:
+            logger.error(f"Error extracting tours from page {page_url}: {str(e)}")
+            return []
+
+    def fetch_collection_by_url(self, collection_url):
+        """
+        Fetch a specific collection by URL, with enhanced HTML scraping
+        
+        Args:
+            collection_url: URL of the collection to fetch
+            
+        Returns:
+            Collection data with tours
+        """
+        if not BS4_AVAILABLE:
+            raise Exception("BeautifulSoup4 is not installed. Please install it with: pip install beautifulsoup4")
+            
+        try:
+            logger.info(f"Fetching collection from URL: {collection_url}")
+            
+            # Extract the collection ID from the URL
+            collection_id = None
+            match = re.search(r'/collection/(\d+)', collection_url)
+            if match:
+                collection_id = match.group(1)
+            else:
+                logger.warning(f"Could not extract collection ID from URL: {collection_url}")
+                raise Exception(f"Invalid collection URL: {collection_url}")
+            
+            # We'll directly scrape the HTML page since API access is no longer reliable
+            # Set browser-like headers for better success
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Referer': 'https://www.komoot.com/',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Cache-Control': 'max-age=0',
+                'TE': 'Trailers'
+            }
+            
+            response = requests.get(collection_url, headers=headers)
+            
+            if response.status_code != 200:
+                logger.error(f"Failed to fetch collection page: {response.status_code}")
+                raise Exception(f"Failed to access collection page, status code: {response.status_code}")
+                
+            # Parse HTML content
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Extract collection name
+            collection_name = f"Collection {collection_id}"
+            title_elem = soup.find('h1')
+            if title_elem:
+                collection_name = title_elem.text.strip()
+            
+            # Extract description
+            description = ""
+            desc_elem = soup.select_one('.collection-description')
+            if desc_elem:
+                description = desc_elem.text.strip()
+                
+            # Extract user ID from URL path or profile link
+            user_id = None
+            creator_name = None
+            creator_elem = soup.select_one('.collection-header__user-link')
+            if creator_elem:
+                creator_name = creator_elem.text.strip()
+                creator_href = creator_elem.get('href')
+                if creator_href:
+                    user_match = re.search(r'/user/([^/]+)', creator_href)
+                    if user_match:
+                        user_id = user_match.group(1)
+            
+            # Extract expected number of tours
+            expected_tours_count = 0
+            stats_elems = soup.select('.collection-meta-data__item')
+            for stat in stats_elems:
+                key_elem = stat.select_one('.collection-meta-data__title')
+                value_elem = stat.select_one('.collection-meta-data__data')
+                if key_elem and value_elem:
+                    key = key_elem.text.strip().lower()
+                    value = value_elem.text.strip()
+                    
+                    if 'route' in key or 'activit' in key:
+                        # Extract tour count
+                        count_match = re.search(r'(\d+)', value)
+                        if count_match:
+                            expected_tours_count = int(count_match.group(1))
+            
+            # If no explicit count found, count tour cards
+            if expected_tours_count == 0:
+                tour_cards = soup.select('.tour-card')
+                if tour_cards:
+                    expected_tours_count = len(tour_cards)
+            
+            # Initialize collection data
+            collection = {
+                'id': collection_id,
+                'name': collection_name,
+                'url': collection_url,
+                'type': 'public',
+                'description': description,
+                'expected_tours_count': expected_tours_count
+            }
+            
+            # Add creator info if available
+            if user_id:
+                collection['creator'] = {
+                    'id': user_id,
+                    'display_name': creator_name or "Unknown User"
+                }
+            
+            # Now extract tours - try multiple strategies to get as many as possible
+            tours = []
+            tour_ids_seen = set()
+            
+            # Strategy 1: Extract from current page
+            page_tours = self.extract_tours_from_collection_page(collection_url)
+            if page_tours:
+                for tour in page_tours:
+                    tour_id = tour['id']
+                    if tour_id not in tour_ids_seen:
+                        tour_ids_seen.add(tour_id)
+                        tours.append(tour)
+                        
+            logger.info(f"Extracted {len(tours)} tours from first page")
+            
+            # Strategy 2: Try to get more tours by increasing page size
+            if expected_tours_count > 0 and len(tours) < expected_tours_count:
+                logger.info(f"Trying to get more tours - found {len(tours)}/{expected_tours_count}")
+                
+                # Try different page sizes
+                for page_size in [50, 100, 200, 500]:
+                    large_page_url = f"{collection_url}?size={page_size}"
+                    logger.info(f"Trying page size {page_size}: {large_page_url}")
+                    
+                    page_tours = self.extract_tours_from_collection_page(large_page_url)
+                    if page_tours:
+                        new_count = 0
+                        for tour in page_tours:
+                            tour_id = tour['id']
+                            if tour_id not in tour_ids_seen:
+                                tour_ids_seen.add(tour_id)
+                                tours.append(tour)
+                                new_count += 1
+                                
+                        logger.info(f"Added {new_count} new tours with page size {page_size}")
+                        
+                    # If we've reached expected count, stop trying
+                    if len(tours) >= expected_tours_count:
+                        logger.info("Reached expected tour count, stopping search")
+                        break
+                        
+            # Strategy 3: Try pagination if still missing tours
+            if expected_tours_count > 0 and len(tours) < expected_tours_count:
+                logger.info(f"Trying pagination - found {len(tours)}/{expected_tours_count}")
+                
+                page = 2  # Start from page 2
+                max_pages = 20  # Safety limit
+                
+                while len(tours) < expected_tours_count and page <= max_pages:
+                    page_url = f"{collection_url}?page={page}"
+                    logger.info(f"Trying page {page}: {page_url}")
+                    
+                    page_tours = self.extract_tours_from_collection_page(page_url)
+                    if not page_tours:
+                        logger.info(f"No tours found on page {page}, stopping pagination")
+                        break
+                        
+                    new_count = 0
+                    for tour in page_tours:
+                        tour_id = tour['id']
+                        if tour_id not in tour_ids_seen:
+                            tour_ids_seen.add(tour_id)
+                            tours.append(tour)
+                            new_count += 1
+                            
+                    logger.info(f"Added {new_count} new tours from page {page}")
+                    
+                    # If no new tours found on this page, stop
+                    if new_count == 0:
+                        logger.info(f"No new tours found on page {page}, stopping pagination")
+                        break
+                        
+                    page += 1
+            
+            # Add tours to collection
+            collection['tours'] = tours
+            collection['tours_count'] = len(tours)
+            
+            # Log final result
+            logger.info(f"Collection '{collection_name}' scraping completed: {len(tours)} tours")
+            
+            return collection
+            
+        except Exception as e:
+            logger.error(f"Error fetching collection by URL: {str(e)}")
+            raise Exception(f"Failed to fetch collection: {str(e)}")
+    
+    def fetch_collections(self, collection_type=None):
+        """
+        Fetch user collections using web scraping rather than API
+        
+        Args:
+            collection_type: Optional filter for collection type ('personal' or 'saved')
+            
+        Returns:
+            List of collection objects
+        """
+        if not BS4_AVAILABLE:
+            raise Exception("BeautifulSoup4 is not installed. Please install it with: pip install beautifulsoup4")
+            
+        try:
+            logger.info(f"Fetching user collections (type filter: {collection_type})")
+            collections = []
+            
+            # Ensure we have user information
+            if not self.user_id:
+                raise Exception("Not logged in. Cannot fetch collections.")
+            
+            # Determine username for URL
+            username_for_url = self.username or self.user_id
+            if not username_for_url:
+                logger.warning("No username found for URL construction")
+                raise Exception("Cannot fetch collections without a username or user ID")
+            
+            logger.info(f"Using username for URLs: {username_for_url}")
+                
+            # The types to process
+            types_to_process = ['personal', 'saved']
+            if collection_type:
+                types_to_process = [collection_type]
+                
+            # Process each collection type
+            for coll_type in types_to_process:
+                try:
+                    # Build URL for this collection type
+                    url = f"https://www.komoot.com/user/{username_for_url}/collections/{coll_type}"
+                    logger.info(f"Fetching {coll_type} collections from {url}")
+                    
+                    # Request the page with proper headers
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                        'Accept-Language': 'en-US,en;q=0.5',
+                        'Referer': 'https://www.komoot.com/',
+                        'Connection': 'keep-alive',
+                        'Upgrade-Insecure-Requests': '1'
+                    }
+                    
+                    response = requests.get(url, headers=headers, cookies=self.session.cookies)
+                    
+                    if response.status_code != 200:
+                        logger.warning(f"Failed to fetch {coll_type} collections: HTTP {response.status_code}")
+                        continue
+                        
+                    # Extract collections from the page
+                    page_collections = self.extract_collections_from_page(response.text, coll_type)
+                    logger.info(f"Found {len(page_collections)} {coll_type} collections")
+                    
+                    # Process each collection to get full details
+                    for i, collection in enumerate(page_collections):
+                        try:
+                            # Limit to prevent timeouts for users with many collections
+                            if i >= 20:
+                                logger.info(f"Limiting to first 20 collections to avoid timeouts")
+                                break
+                                
+                            logger.info(f"Fetching details for collection {i+1}/{len(page_collections)}: {collection['name']}")
+                            
+                            collection_details = self.fetch_collection_by_url(collection['url'])
+                            
+                            if collection_details:
+                                # Keep original type and ID
+                                original_type = collection['type']
+                                original_id = collection['id']
+                                
+                                # Update collection with details
+                                collection.update(collection_details)
+                                
+                                # Ensure type and ID remain consistent
+                                collection['type'] = original_type
+                                collection['id'] = original_id
+                                
+                                # Add to collection list
+                                collections.append(collection)
+                            
+                        except Exception as coll_err:
+                            logger.error(f"Error fetching collection details: {str(coll_err)}")
+                            # Still add the basic collection
+                            collections.append(collection)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing {coll_type} collections: {str(e)}")
+            
+            logger.info(f"Found {len(collections)} total collections")
+            return collections
+            
+        except Exception as e:
+            logger.error(f"Error fetching collections: {str(e)}")
+            raise Exception(f"Failed to fetch collections: {str(e)}")
     
     def download_tour_images(self, tour_id, tour=None, output_dir='static/exports/images'):
         """
@@ -194,6 +1007,12 @@ class KomootAdapter:
         except Exception as e:
             logger.error(f"Error downloading tour images: {str(e)}")
             raise Exception(f"Failed to download tour images: {str(e)}")
+    
+    def extract_user_from_tip(self, json):
+        """Extract user info from tip data, similar to KomootGPX"""
+        if "_embedded" in json and "creator" in json["_embedded"] and "display_name" in json["_embedded"]["creator"]:
+            return json["_embedded"]["creator"]["display_name"] + ": "
+        return ""
         
     def make_gpx(self, tour_id, output_dir, include_poi, skip_existing, 
                 tour_base, add_date, max_title_length, max_desc_length, 
@@ -219,10 +1038,136 @@ class KomootAdapter:
         try:
             logger.info(f"Making GPX for tour {tour_id}, anonymous: {anonymous}")
             
+            # First try using KomootGPX if available
+            if KOMOOTGPX_AVAILABLE:
+                logger.info("Trying KomootGPX for GPX generation")
+                try:
+                    # Prepare arguments for KomootGPX command
+                    args = ["komootgpx"]
+                    
+                    # Authentication
+                    if not anonymous and self.user_id and self.token:
+                        args.extend(["-m", "dummy@example.com", "-p", self.token])
+                    else:
+                        args.append("-n")  # Anonymous mode
+                        
+                    # Tour ID
+                    args.extend(["-d", str(tour_id)])
+                    
+                    # Output directory
+                    args.extend(["-o", output_dir])
+                    
+                    # POI option
+                    if not include_poi:
+                        args.append("-e")
+                        
+                    # Description length
+                    if max_desc_length >= 0:
+                        args.extend(["--max-desc-length", str(max_desc_length)])
+                        
+                    # Title length
+                    if max_title_length >= 0:
+                        args.extend(["--max-title-length", str(max_title_length)])
+                        
+                    # Add date
+                    if add_date:
+                        args.append("-D")
+                        
+                    # Execute KomootGPX
+                    logger.info(f"Running KomootGPX with args: {' '.join(args)}")
+                    result = subprocess.run(args, capture_output=True, text=True)
+                    
+                    if result.returncode != 0:
+                        logger.error(f"KomootGPX failed: {result.stderr}")
+                        raise Exception("KomootGPX execution failed")
+                    
+                    # Extract filename from output
+                    output = result.stdout
+                    filename_match = re.search(r"GPX file written to ['\"](.+?)['\"]", output)
+                    if filename_match:
+                        full_path = filename_match.group(1)
+                        self._last_filename = os.path.basename(full_path)
+                        logger.info(f"GPX file written to {full_path}")
+                        
+                        # Save tour data for reference
+                        if not tour_base:
+                            self.last_tour = self.fetch_tour(tour_id, anonymous=anonymous)
+                        else:
+                            self.last_tour = tour_base
+                            
+                        # Return GPX content if requested
+                        if return_content:
+                            with open(full_path, 'r', encoding='utf-8') as f:
+                                return f.read()
+                                
+                        return True
+                        
+                except Exception as e:
+                    logger.error(f"KomootGPX failed: {str(e)}, falling back to built-in method")
+            
+            # Fallback to direct API or our own implementation
+            if anonymous:
+                # For anonymous mode, try direct GPX API first
+                try:
+                    logger.info(f"Trying direct GPX API for tour {tour_id}")
+                    gpx_url = f"https://www.komoot.com/api/v007/tours/{tour_id}/gpx"
+                    response = requests.get(gpx_url)
+                    
+                    if response.status_code == 200:
+                        gpx_content = response.text
+                        
+                        # Create filename
+                        if max_title_length == 0:
+                            filename = f"{tour_id}.gpx"
+                        else:
+                            # Try to get tour name
+                            if not tour_base:
+                                try:
+                                    tour_base = self._scrape_tour_page(tour_id)
+                                except:
+                                    pass
+                                    
+                            # Set default name
+                            tour_name = f"Tour_{tour_id}" if not tour_base else tour_base.get('name', f"Tour_{tour_id}")
+                            tour_name = sanitize_filename(tour_name)
+                            
+                            # Apply length limit if needed
+                            if max_title_length > 0 and len(tour_name) > max_title_length:
+                                tour_name = tour_name[:max_title_length]
+                                
+                            filename = f"{tour_name}-{tour_id}.gpx"
+                        
+                        # Add date prefix if requested
+                        if add_date and tour_base and 'date' in tour_base:
+                            date_str = tour_base['date'][:10]
+                            filename = f"{date_str}_{filename}"
+                            
+                        # Full path to file
+                        output_path = os.path.join(output_dir, filename)
+                        
+                        # Save the file
+                        with open(output_path, 'w', encoding='utf-8') as f:
+                            f.write(gpx_content)
+                            
+                        # Store filename and tour data
+                        self.last_filename = filename
+                        self.last_tour = tour_base
+                        
+                        logger.info(f"GPX file written to {output_path}")
+                        
+                        # Return GPX content if requested
+                        if return_content:
+                            return gpx_content
+                            
+                        return True
+                        
+                except Exception as e:
+                    logger.error(f"Direct GPX API failed: {str(e)}")
+            
             tour = None
             if tour_base is None:
                 logger.info(f"Fetching tour {tour_id} details")
-                tour_base = self.fetch_tour(str(tour_id))
+                tour_base = self.fetch_tour(str(tour_id), anonymous=anonymous)
                 tour = tour_base
                 
             # Save the last tour for reference
@@ -230,10 +1175,11 @@ class KomootAdapter:
             
             # Example date: 2022-01-02T12:26:41.795+01:00
             # :10 extracts "2022-01-02" from this.
-            date_str = tour_base['date'][:10]+'_' if add_date else ''
+            date_str = ""
+            if 'date' in tour_base and add_date:
+                date_str = tour_base['date'][:10] + '_'
             
             # Create filename
-            from komootgpx.utils import sanitize_filename
             filename = sanitize_filename(tour_base['name'])
             if max_title_length == 0:
                 filename = f"{tour_id}"
@@ -259,12 +1205,199 @@ class KomootAdapter:
             # Fetch tour if not already fetched
             if tour is None:
                 logger.info(f"Fetching tour details for {tour_id}")
-                tour = self.fetch_tour(str(tour_id))
+                tour = self.fetch_tour(str(tour_id), anonymous=anonymous)
+            
+            # Create GPX using Python's gpxpy library if available
+            if GPXPY_AVAILABLE:
+                # Create basic GPX document
+                gpx = gpxpy.gpx.GPX()
+                gpx.name = tour['name']
+                if tour.get('type') == "tour_recorded":
+                    gpx.name = gpx.name + " (Completed)"
                 
-            # Create GPX
-            logger.info(f"Generating GPX content for tour {tour_id}")
-            gpx = GpxCompiler(tour, self.api, not include_poi, max_desc_length)
-            gpx_content = gpx.generate()
+                # Add metadata
+                distance_km = tour.get('distance', 0) / 1000.0 if 'distance' in tour else 0
+                duration_hours = tour.get('duration', 0) / 3600.0 if 'duration' in tour else 0
+                elevation_up = tour.get('elevation_up', 0) if 'elevation_up' in tour else 0
+                elevation_down = tour.get('elevation_down', 0) if 'elevation_down' in tour else 0
+                
+                gpx.description = f"Distance: {distance_km:.2f}km, " \
+                                f"Estimated duration: {duration_hours:.2f}h, " \
+                                f"Elevation up: {elevation_up}m, " \
+                                f"Elevation down: {elevation_down}m"
+                
+                if "difficulty" in tour:
+                    gpx.description = gpx.description + f", Grade: {tour['difficulty']['grade']}"
+                
+                # Add author if available
+                if '_embedded' in tour and 'creator' in tour['_embedded']:
+                    creator = tour['_embedded']['creator']
+                    gpx.author_name = creator.get('display_name', 'Komoot User')
+                    if 'username' in creator:
+                        gpx.author_link = f"https://www.komoot.de/user/{creator['username']}"
+                        gpx.author_link_text = f"View {gpx.author_name}'s Profile on Komoot"
+                
+                gpx.link = f"https://www.komoot.de/tour/{tour_id}"
+                gpx.link_text = "View tour on Komoot"
+                
+                # Create track
+                track = gpxpy.gpx.GPXTrack()
+                track.name = gpx.name
+                track.description = gpx.description
+                track.link = gpx.link
+                track.link_text = gpx.link_text
+                
+                gpx.tracks.append(track)
+                
+                # Create segment
+                segment = gpxpy.gpx.GPXTrackSegment()
+                track.segments.append(segment)
+                
+                # Add points
+                augment_timestamp = False
+                start_date = None
+                
+                if "_embedded" in tour and "coordinates" in tour["_embedded"] and "items" in tour["_embedded"]["coordinates"]:
+                    route = []
+                    for coord in tour["_embedded"]["coordinates"]["items"]:
+                        point = {}
+                        if "lat" in coord and "lng" in coord:
+                            point['lat'] = coord["lat"]
+                            point['lng'] = coord["lng"]
+                            if "alt" in coord:
+                                point['alt'] = coord["alt"]
+                            if "t" in coord:
+                                point['time'] = coord["t"]
+                            route.append(point)
+                    
+                    if route and 'time' in route[0] and route[0]['time'] == 0:
+                        augment_timestamp = True
+                        start_date = datetime.strptime(tour['date'], "%Y-%m-%dT%H:%M:%S.%f%z")
+                    
+                    # Add track points
+                    for coord in route:
+                        point = gpxpy.gpx.GPXTrackPoint(coord['lat'], coord['lng'])
+                        
+                        if 'alt' in coord:
+                            point.elevation = coord['alt']
+                            
+                        if 'time' in coord:
+                            if augment_timestamp:
+                                try:
+                                    point.time = start_date + timedelta(seconds=coord['time'] / 1000)
+                                except:
+                                    pass
+                            else:
+                                try:
+                                    point.time = datetime.fromtimestamp(coord['time'] / 1000)
+                                except:
+                                    pass
+                                
+                        segment.points.append(point)
+                
+                # Add POIs/Highlights if not disabled
+                if include_poi:
+                    # When we have POIs, process them
+                    if "_embedded" in tour and "timeline" in tour["_embedded"] and "_embedded" in tour["_embedded"]["timeline"]:
+                        for item in tour["_embedded"]["timeline"]["_embedded"]["items"]:
+                            if item["type"] != "poi" and item["type"] != "highlight":
+                                continue
+                            
+                            ref = item["_embedded"]["reference"]
+                            
+                            wp = None
+                            
+                            if item["type"] == "poi":
+                                # Handle regular POI
+                                name = "Unknown POI"
+                                location = {}
+                                details = ""
+                                
+                                if "name" in ref:
+                                    name = ref["name"]
+                                if "location" in ref:
+                                    location = ref["location"]
+                                if "details" in ref:
+                                    details = ', '.join(str(x['formatted']) for x in ref['details'])
+                                
+                                # Create waypoint for this POI if location is valid
+                                if location and "lat" in location and "lng" in location:
+                                    wp = gpxpy.gpx.GPXWaypoint(location["lat"], location["lng"])
+                                    wp.name = name
+                                    wp.description = details
+                                    wp.type = "POI"
+                                    
+                            elif item["type"] == "highlight":
+                                # Handle highlight POI
+                                name = "Unknown Highlight"
+                                location = {}
+                                details = ""
+                                url = f"https://www.komoot.de/highlight/{ref['id']}" if 'id' in ref else ""
+                                image_url = ""
+                                
+                                if "name" in ref:
+                                    name = ref["name"]
+                                if "mid_point" in ref:
+                                    location = ref["mid_point"]
+                                if "_embedded" in ref and "front_image" in ref["_embedded"] and "src" in ref["_embedded"]["front_image"]:
+                                    image_url = ref["_embedded"]["front_image"]["src"].split("?", 1)[0]
+                                
+                                # Get tips/comments for this highlight
+                                try:
+                                    if not anonymous and 'id' in ref:
+                                        tips = self.fetch_highlight_tips(str(ref["id"]))
+                                        if "_embedded" in tips and "items" in tips["_embedded"]:
+                                            comments = []
+                                            for tip in tips["_embedded"]["items"]:
+                                                user = self.extract_user_from_tip(tip)
+                                                
+                                                if "text" in tip:
+                                                    comments.append(user + tip["text"])
+                                            
+                                            if comments:
+                                                details = "\n――――――――――\n".join(comments)
+                                except Exception as e:
+                                    logger.warning(f"Error fetching highlight tips: {str(e)}")
+                                
+                                # Crop description if needed
+                                if max_desc_length == 0:
+                                    details = ""
+                                elif max_desc_length > 0 and details and len(details) > max_desc_length:
+                                    details = details[:max_desc_length - 3] + "..."
+                                
+                                # Create waypoint for this highlight if location is valid
+                                if location and "lat" in location and "lng" in location:
+                                    wp = gpxpy.gpx.GPXWaypoint(location["lat"], location["lng"])
+                                    wp.name = name
+                                    wp.description = details
+                                    wp.type = "Highlight"
+                                    wp.link = url
+                                    wp.link_text = "View Highlight on Komoot"
+                                    wp.comment = image_url  # Store image URL in comment
+                            
+                            # Add waypoint to GPX if created
+                            if wp:
+                                wp.source = "Komoot"
+                                if "alt" in location:
+                                    wp.elevation = location["alt"]
+                                gpx.waypoints.append(wp)
+                
+                # Generate final XML
+                gpx_content = gpx.to_xml()
+            else:
+                # Fallback to basic XML if gpxpy is not available
+                logger.warning("gpxpy not available, using basic XML template")
+                gpx_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+                <gpx version="1.1" creator="Komoot Collection Scraper">
+                <metadata>
+                    <name>{tour.get('name', 'Unknown Tour')}</name>
+                    <time>{tour.get('date', datetime.now().isoformat())}</time>
+                </metadata>
+                <trk>
+                    <name>{tour.get('name', 'Unknown Tour')}</name>
+                </trk>
+                </gpx>
+                """
             
             # Create directory if needed
             os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
@@ -277,11 +1410,76 @@ class KomootAdapter:
             # Return content if requested
             if return_content:
                 return gpx_content
-            return None
+            return True
             
         except Exception as e:
             logger.error(f"Error generating GPX: {str(e)}")
             raise Exception(f"Failed to generate GPX: {str(e)}")
+    
+    def export_collection_to_json(self, collection, output_dir='static/exports/collections'):
+        """Export a collection to JSON format"""
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Create filename from collection name
+            filename = sanitize_filename(collection['name'])
+            if not filename:
+                filename = f"collection_{collection['id']}"
+                
+            path = os.path.join(output_dir, f"{filename}-{collection['id']}.json")
+            
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(collection, f, indent=2, ensure_ascii=False)
+                
+            logger.info(f"Exported collection '{collection['name']}' to {path}")
+            return path
+        except Exception as e:
+            logger.error(f"Error exporting collection to JSON: {str(e)}")
+            return None
+    
+    def export_collection_to_csv(self, collection, output_dir='static/exports/collections'):
+        """Export collection's tours to CSV format"""
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Create filename from collection name
+            filename = sanitize_filename(collection['name'])
+            if not filename:
+                filename = f"collection_{collection['id']}"
+                
+            path = os.path.join(output_dir, f"{filename}-{collection['id']}_tours.csv")
+            
+            # Prepare data for CSV
+            if 'tours' not in collection or not collection['tours']:
+                logger.warning(f"No tours found in collection '{collection['name']}'")
+                return None
+                
+            # Check what fields are available in tours
+            field_names = ['id', 'name', 'url']
+            sample_tour = collection['tours'][0]
+            for key in sample_tour.keys():
+                if key not in field_names and key != 'komoot_url':  # Skip komoot_url as it's redundant
+                    field_names.append(key)
+            
+            # Ensure we have the most important fields
+            for field in ['distance_km', 'duration', 'type', 'sport']:
+                if field not in field_names:
+                    field_names.append(field)
+            
+            # Write CSV file
+            with open(path, 'w', encoding='utf-8', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=field_names, extrasaction='ignore')
+                writer.writeheader()
+                for tour in collection['tours']:
+                    # Create a copy of the tour without redundant URL fields
+                    tour_data = {k: v for k, v in tour.items() if k != 'komoot_url'}
+                    writer.writerow(tour_data)
+            
+            logger.info(f"Exported {len(collection['tours'])} tours from collection '{collection['name']}' to {path}")
+            return path
+        except Exception as e:
+            logger.error(f"Error exporting collection to CSV: {str(e)}")
+            return None
     
     def get_last_filename(self):
         """Get the last generated filename"""

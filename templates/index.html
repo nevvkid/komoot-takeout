@@ -3,1006 +3,922 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Komoot GPX Downloader</title>
+    <title>komoot-takeout</title>
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <style>
-        .notification {
+        .hidden {
+            display: none;
+        }
+        /* Custom background color */
+        body {
+            background-color: #f5f4e9;
+        }
+        .bg-4f840d { 
+            background-color: #4f840d;
+        }
+        /* Floating progress bar */
+        .floating-progress {
             position: fixed;
-            top: 1rem;
-            right: 1rem;
-            padding: 1rem;
-            border-radius: 0.5rem;
-            z-index: 40;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            animation: slideIn 0.3s ease-out;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 90%;
+            max-width: 500px;
+            z-index: 100;
         }
-        
-        @keyframes slideIn {
-            from {
-                transform: translateX(100%);
-                opacity: 0;
-            }
-            to {
-                transform: translateX(0);
-                opacity: 1;
-            }
+        /* Increase contrast for progress bar */
+        .bg-blue-500 {
+            background-color: #0077d9;
         }
-        
-        /* Scrollable containers */
-        .scrollable-container {
-            max-height: 50vh;
+        /* Custom scrollbar for logs */
+        .log-container {
+            max-height: 150px;
             overflow-y: auto;
-            scrollbar-width: thin;
+            border: 1px solid #e2e8f0;
+            border-radius: 0.5rem;
+            padding: 0.5rem;
+            background-color: #f8fafc;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9rem;
         }
-        
-        /* For WebKit browsers */
-        .scrollable-container::-webkit-scrollbar {
-            width: 6px;
+        .log-container::-webkit-scrollbar {
+            width: 8px;
         }
-        
-        .scrollable-container::-webkit-scrollbar-track {
+        .log-container::-webkit-scrollbar-track {
             background: #f1f1f1;
         }
-        
-        .scrollable-container::-webkit-scrollbar-thumb {
+        .log-container::-webkit-scrollbar-thumb {
             background: #888;
             border-radius: 4px;
         }
-        
-        .scrollable-container::-webkit-scrollbar-thumb:hover {
+        .log-container::-webkit-scrollbar-thumb:hover {
             background: #555;
+        }
+        /* Tab styling */
+        .tab {
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.3s;
+        }
+        .tab.active {
+            border-bottom: 2px solid #4f840d;
+            color: #4f840d;
+            font-weight: 700;
+        }
+        button {
+            font-weight: 700;
+        }
+        /* Tooltip */
+        .tooltip {
+            position: relative;
+            display: inline-block;
+        }
+        .tooltip .tooltiptext {
+            visibility: hidden;
+            width: 250px;
+            background-color: #333;
+            color: #fff;
+            text-align: center;
+            border-radius: 6px;
+            padding: 5px;
+            position: absolute;
+            z-index: 1;
+            bottom: 125%;
+            left: 50%;
+            transform: translateX(-50%);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        .tooltip:hover .tooltiptext {
+            visibility: visible;
+            opacity: 0.9;
+            color:#fff;
+        }
+        .tooltip .tooltiptext::after {
+            content: "";
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            margin-left: -5px;
+            border-width: 5px;
+            border-style: solid;
+            border-color: #333 transparent transparent transparent;
+        }
+        /* Desktop application specific styling */
+        .desktop-only {
+            display: none; /* Hidden by default, shown if in desktop app */
         }
     </style>
 </head>
-<body class="bg-gray-100">
+<body class="min-h-screen">
     <div class="container mx-auto px-4 py-8">
-        <header class="flex flex-col md:flex-row justify-between items-center mb-8">
+        <div class="flex justify-between items-center mb-8">
             <div>
-                <h1 class="text-3xl font-bold text-gray-800">Komoot GPX Downloader</h1>
-                <p class="text-gray-600">Download your Komoot tours as GPX files with all POIs</p>
+                <h1 class="text-3xl font-bold text-gray-800">komoot-takeout</h1>
+                <p class="text-gray-600">Get your tours. They're yours.</p>
             </div>
-            <div class="mt-4 md:mt-0">
-                <div class="flex space-x-4">
-                    <button id="helpBtn" class="p-2 rounded-lg bg-blue-500 hover:bg-blue-600 text-white focus:outline-none">
-                        <i class="fas fa-question-circle mr-1"></i> Help
+            <div class="text-sm text-gray-600">
+                <a href="https://github.com/nevvkid/komoot-takeout" target="_blank" class="hover:text-blue-500">
+                    GitHub
+                </a>
+            </div>
+        </div>
+
+        <!-- Tabs navigation -->
+        <div class="flex mb-4 border-b border-gray-200">
+            <div id="tab-tours" class="tab active px-4 py-2">
+                Tours
+            </div>
+            <div id="tab-collections" class="tab px-4 py-2">
+                Collections
+            </div>
+        </div>
+
+        <!-- Tours Tab Content -->
+        <div id="content-tours" class="bg-white p-6 rounded-lg shadow-md mb-8">
+            <h2 class="text-xl font-semibold mb-4">Tours Export</h2>
+            
+            <div class="mb-6">
+                <label class="inline-flex items-center">
+                    <input type="checkbox" id="anonymous-checkbox" class="form-checkbox h-5 w-5 text-blue-600">
+                    <span class="ml-2 text-gray-700">Anonymous Export (Limited to single tour)</span>
+                </label>
+            </div>
+            
+            <div id="login-section">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <label for="email" class="block text-gray-700 mb-2">Email</label>
+                        <input type="email" id="email" class="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                    <div>
+                        <label for="password" class="block text-gray-700 mb-2">Password</label>
+                        <input type="password" id="password" class="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+            </div>
+
+            <div id="tour-selection-section" class="mb-4">
+                <div class="flex flex-wrap items-center gap-3 mb-3">
+                    <div class="flex items-center">
+                        <input type="radio" id="all-tours" name="tour-selection" value="all" checked
+                            class="form-radio h-5 w-5 text-blue-600">
+                        <label for="all-tours" class="ml-2 text-gray-700">All Tours</label>
+                    </div>
+                    <div class="flex items-center">
+                        <input type="radio" id="single-tour" name="tour-selection" value="single"
+                            class="form-radio h-5 w-5 text-blue-600">
+                        <label for="single-tour" class="ml-2 text-gray-700">Single Tour</label>
+                    </div>
+                    <div id="tour-id-input" class="hidden flex-grow">
+                        <label for="tour-id" class="block text-gray-700 mb-1">Tour ID</label>
+                        <input type="text" id="tour-id" placeholder="e.g., 1234567890"
+                            class="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+                </div>
+                
+                <div id="filter-section">
+                    <label for="filter-type" class="block text-gray-700 mb-2">Filter Tours</label>
+                    <select id="filter-type" class="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="all">All Tours</option>
+                        <option value="tour_recorded">Recorded Only</option>
+                        <option value="tour_planned">Planned Only</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Modified Output Directory with Folder Selection -->
+            <div class="mb-4">
+                <label for="output-dir" class="block text-gray-700 mb-2">Output Directory</label>
+                <div class="flex items-center">
+                    <input type="text" id="output-dir" class="flex-grow px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <button type="button" class="ml-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 folder-selection-btn" data-target="output-dir">
+                        Browse...
                     </button>
                 </div>
             </div>
-        </header>
-        
-        <!-- Tab Navigation -->
-        <div class="mb-8">
-            <div class="flex border-b border-gray-300">
-                <button id="configTabBtn" class="px-4 py-2 font-medium text-gray-600 hover:text-gray-800 focus:outline-none border-b-2 border-blue-500">
-                    <i class="fas fa-cog mr-2"></i> Configure
-                </button>
-                <button id="dataTabBtn" class="px-4 py-2 font-medium text-gray-600 hover:text-gray-800 focus:outline-none border-b-2 border-transparent">
-                    <i class="fas fa-table mr-2"></i> Data
+
+            <!-- Options toggle button -->
+            <div class="mb-4">
+                <button id="options-toggle-btn" class="px-4 py-2 bg-white text-gray-800 rounded-lg hover:bg-gray-300 border border-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-opacity-50">
+                    Show Options
                 </button>
             </div>
-        </div>
-        
-        <!-- Configure Tab -->
-        <div id="configTab" class="tab-content">
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <!-- Configuration Panel (Left) -->
-                <div class="bg-white rounded-lg shadow-md p-6">
-                    <h2 class="text-xl font-semibold text-gray-800 mb-4">Komoot GPX Configuration</h2>
-                    
-                    <div class="mb-4">
-                        <label class="inline-flex items-center">
-                            <input type="checkbox" id="anonymousMode" class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4">
-                            <span class="ml-2 text-gray-700">Anonymous Mode</span>
-                        </label>
-                        <p class="text-xs text-gray-500 mt-1">Use this for public tours without logging in</p>
-                    </div>
-                    
-                    <div id="loginFields" class="space-y-4 mb-6">
-                        <div>
-                            <label class="block text-gray-700 mb-1">Email</label>
-                            <input type="email" id="emailInput" class="w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500" placeholder="your.email@example.com">
-                        </div>
-                        <div>
-                            <label class="block text-gray-700 mb-1">Password</label>
-                            <input type="password" id="passwordInput" class="w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500" placeholder="Your Komoot password">
-                        </div>
-                    </div>
-                    
-                    <div class="mb-6">
-                        <label class="block text-gray-700 mb-2">Tour Selection</label>
+
+            <div id="options-section" class="hidden">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                    <div>
+                        <h3 class="font-semibold mb-2">GPX Options</h3>
                         <div class="space-y-2">
                             <label class="inline-flex items-center">
-                                <input type="radio" name="tourSelection" value="all" class="text-indigo-600 focus:ring-indigo-500 h-4 w-4">
-                                <span class="ml-2 text-gray-700">All My Tours</span>
+                                <input type="checkbox" id="no-poi" class="form-checkbox h-5 w-5 text-blue-600">
+                                <span class="ml-2 text-gray-700 tooltip">
+                                    No POIs
+                                    <span class="tooltiptext">Exclude points of interest from the GPX file</span>
+                                </span>
                             </label>
-                            <label class="inline-flex items-center">
-                                <input type="radio" name="tourSelection" value="specific" class="text-indigo-600 focus:ring-indigo-500 h-4 w-4" checked>
-                                <span class="ml-2 text-gray-700">Specific Tour ID</span>
-                                <button id="showImportBtn" class="ml-2 text-sm text-indigo-600 hover:text-indigo-800">
-                                    <i class="fas fa-file-import"></i> Import IDs
-                                </button>
-                            </label>
-                        </div>
-                    </div>
-                    
-                    <div id="tourIdField" class="mb-6">
-                        <label class="block text-gray-700 mb-1">Tour ID</label>
-                        <input type="text" id="tourIdInput" class="w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500" placeholder="e.g. 1234567890">
-                        <p class="text-xs text-gray-500 mt-1">Find the ID in the URL: komoot.com/tour/<strong>1234567890</strong></p>
-                    </div>
-                    
-                    <div id="importTourSection" class="mt-4 hidden">
-                        <label class="block text-gray-700 mb-1">Import Tour IDs:</label>
-                        <textarea id="tourIdsImport" class="w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm" rows="4" placeholder="Enter tour IDs, one per line or comma-separated"></textarea>
-                        <div class="mt-2">
-                            <button id="importToursBtn" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
-                                <i class="fas fa-file-import mr-2"></i> Import Tour IDs
-                            </button>
-                        </div>
-                    </div>
-                    
-                    <div id="allToursFields" class="mb-6 hidden">
-                        <div class="flex items-center justify-between">
-                            <div class="w-2/3">
-                                <label class="block text-gray-700 mb-1">Filter by Type</label>
-                                <select id="filterType" class="w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
-                                    <option value="all">All Tours</option>
-                                    <option value="planned">Planned Tours</option>
-                                    <option value="recorded">Recorded Tours</option>
-                                </select>
-                            </div>
-                            <div class="w-1/3 pl-2 pt-5">
-                                <button id="checkToursBtn" class="w-full px-3 py-2 text-xs bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-lg focus:outline-none">
-                                    <i class="fas fa-check mr-1"></i> Check Count
-                                </button>
-                            </div>
-                        </div>
-                        <div id="totalToursInfo" class="text-sm text-blue-600 mt-2"></div>
-                    </div>
-                    
-                    <div class="mb-6">
-                        <label class="inline-flex items-center">
-                            <input type="checkbox" id="includePoi" class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4" checked>
-                            <span class="ml-2 text-gray-700">Include POIs (Highlights)</span>
-                        </label>
-                        <p class="text-xs text-gray-500 mt-1">Add Komoot highlights as waypoints in the GPX file</p>
-                    </div>
-                    
-                    <div class="mb-6">
-                        <button id="toggleAdvancedBtn" class="text-indigo-600 hover:text-indigo-800 text-sm font-medium focus:outline-none">
-                            <i class="fas fa-caret-right mr-1" id="advancedCaret"></i> Advanced Options
-                        </button>
-                        
-                        <div id="advancedOptions" class="hidden mt-4 space-y-4 border-t border-gray-200 pt-4">
-                            <div>
+                            <div class="block">
                                 <label class="inline-flex items-center">
-                                    <input type="checkbox" id="skipExisting" class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4" checked>
-                                    <span class="ml-2 text-gray-700 text-sm">Skip existing files</span>
+                                    <input type="checkbox" id="skip-existing" class="form-checkbox h-5 w-5 text-blue-600" checked>
+                                    <span class="ml-2 text-gray-700 tooltip">
+                                        Skip Existing
+                                        <span class="tooltiptext">Skip tours that already have a GPX file</span>
+                                    </span>
                                 </label>
-                                <p class="text-xs text-gray-500 mt-1">Don't overwrite files that already exist</p>
                             </div>
-                            
-                            <div>
+                            <div class="block">
                                 <label class="inline-flex items-center">
-                                    <input type="checkbox" id="idFilename" class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4">
-                                    <span class="ml-2 text-gray-700 text-sm">Use ID as filename</span>
+                                    <input type="checkbox" id="id-filename" class="form-checkbox h-5 w-5 text-blue-600">
+                                    <span class="ml-2 text-gray-700 tooltip">
+                                        ID Filename
+                                        <span class="tooltiptext">Use only tour ID as filename</span>
+                                    </span>
                                 </label>
-                                <p class="text-xs text-gray-500 mt-1">Use only the tour ID for the filename</p>
                             </div>
-                            
-                            <div>
+                            <div class="block">
                                 <label class="inline-flex items-center">
-                                    <input type="checkbox" id="addDate" class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4">
-                                    <span class="ml-2 text-gray-700 text-sm">Add date to filename</span>
+                                    <input type="checkbox" id="add-date" class="form-checkbox h-5 w-5 text-blue-600" checked>
+                                    <span class="ml-2 text-gray-700 tooltip">
+                                        Add Date Prefix
+                                        <span class="tooltiptext">Add date to filename (e.g., "2023-04-15_")</span>
+                                    </span>
                                 </label>
-                                <p class="text-xs text-gray-500 mt-1">Prepend YYYY-MM-DD to filename</p>
                             </div>
-                            
-                            <div>
-                                <label class="block text-gray-700 mb-1 text-sm">Max title length in filename:</label>
-                                <input type="number" id="maxTitleLength" value="-1" min="-1" class="w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-base">
-                                <p class="text-xs text-gray-500 mt-1">Maximum length of tour name in filename (-1 for unlimited)</p>
-                            </div>
-                            
-                            <div>
-                                <label class="block text-gray-700 mb-1 text-sm">Max description length:</label>
-                                <input type="number" id="maxDescLength" value="-1" min="-1" class="w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-base">
-                                <p class="text-xs text-gray-500 mt-1">Maximum length of POI descriptions (-1 for unlimited)</p>
-                            </div>
-                            
-                            <div>
+                            <div class="block">
                                 <label class="inline-flex items-center">
-                                    <input type="checkbox" id="downloadImages" class="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4">
-                                    <span class="ml-2 text-gray-700 text-sm">Download tour photos</span>
+                                    <input type="checkbox" id="download-images" class="form-checkbox h-5 w-5 text-blue-600">
+                                    <span class="ml-2 text-gray-700 tooltip">
+                                        Download Images
+                                        <span class="tooltiptext">Download all images associated with tours</span>
+                                    </span>
                                 </label>
-                                <p class="text-xs text-gray-500 mt-1">Saves photos from your recorded tours</p>
-                            </div>
-                            
-                            <div>
-                                <label class="block text-gray-700 mb-1 text-sm">Chunk size for large downloads:</label>
-                                <input type="number" id="chunkSizeInput" value="100" min="10" step="10" class="w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-base">
-                                <p class="text-xs text-gray-500 mt-1">For large downloads, process this many tours at once</p>
                             </div>
                         </div>
                     </div>
-                    
                     <div>
-                        <button id="startProcessingBtn" class="inline-flex items-center text-white bg-indigo-600 hover:bg-indigo-700 font-medium py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
-                            <i class="fas fa-play mr-2"></i> Start Processing
-                        </button>
+                        <h3 class="font-semibold mb-2">Advanced Options</h3>
+                        <div class="space-y-3">
+                            <div>
+                                <label for="max-title-length" class="block text-gray-700 mb-1 tooltip">
+                                    Max Title Length
+                                    <span class="tooltiptext">Limit title length in GPX file (-1 for no limit, 0 for ID only)</span>
+                                </label>
+                                <input type="number" id="max-title-length" value="-1" min="-1"
+                                    class="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
+                            <div>
+                                <label for="max-desc-length" class="block text-gray-700 mb-1 tooltip">
+                                    Max Description Length
+                                    <span class="tooltiptext">Limit description length in GPX file (-1 for no limit)</span>
+                                </label>
+                                <input type="number" id="max-desc-length" value="-1" min="-1"
+                                    class="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                            </div>
+                        </div>
                     </div>
                 </div>
-                
-                <!-- Status Panel (Right) -->
-                <div>
-                    <!-- Empty state -->
-                    <div id="emptyState" class="bg-white rounded-lg shadow-md p-6 mb-4 text-center">
-                        <i class="fas fa-route text-6xl text-gray-400 mb-4"></i>
-                        <h3 class="text-xl font-medium text-gray-700">No Tours Processed Yet</h3>
-                        <p class="text-gray-500 mt-2">Configure your settings and click "Start Processing" to begin</p>
-                    </div>
-                    
-                    <!-- Processing status -->
-                    <div id="processingStatus" class="bg-white rounded-lg shadow-md p-6 mb-4 hidden">
-                        <h2 class="text-xl font-semibold text-gray-800 mb-4">Processing Status</h2>
-                        
-                        <div class="mb-4">
-                            <div class="flex justify-between items-center mb-2">
-                                <div>
-                                    <span class="text-gray-700 font-medium">Status:</span>
-                                    <span id="statusState" class="ml-2 text-gray-600">Waiting...</span>
-                                </div>
-                                <div>
-                                    <span class="text-gray-700 font-medium">Time:</span>
-                                    <span id="statusTime" class="ml-2 text-gray-600">00:00</span>
-                                </div>
-                            </div>
-                            
-                            <div class="mb-2">
-                                <span class="text-gray-700 font-medium">Tours Processed:</span>
-                                <span id="statusTours" class="ml-2 text-gray-600">0/0</span>
-                            </div>
-                            
-                            <div class="flex items-center">
-                                <div class="w-full bg-gray-200 rounded-full h-2.5">
-                                    <div id="progressBar" class="bg-indigo-600 h-2.5 rounded-full" style="width: 0%"></div>
-                                </div>
-                                <span id="progressPercent" class="text-sm text-gray-500 ml-2">0%</span>
-                            </div>
+
+                <div id="chunking-section" class="mb-6 hidden">
+                    <h3 class="font-semibold mb-2">Chunking Options <span class="text-xs text-gray-500">(For large collections)</span></h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label for="chunk-size" class="block text-gray-700 mb-1 tooltip">
+                                Chunk Size
+                                <span class="tooltiptext">Number of tours to process in each chunk (0 for all)</span>
+                            </label>
+                            <input type="number" id="chunk-size" value="0" min="0"
+                                class="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                         </div>
-                        
-                        <div id="chunkProgress" class="mt-4 hidden">
-                            <h4 class="text-sm font-medium text-gray-700 mb-2">Chunk Progress</h4>
-                            <div class="flex items-center">
-                                <div class="w-full bg-gray-200 rounded-full h-2.5">
-                                    <div id="chunkProgressBar" class="bg-indigo-600 h-2.5 rounded-full" style="width: 0%"></div>
-                                </div>
-                                <span id="chunkProgressText" class="text-sm text-gray-500 ml-2">0/0</span>
-                            </div>
-                        </div>
-                        
-                        <div class="mt-4">
-                            <h4 class="text-sm font-medium text-gray-700 mb-2">Log</h4>
-                            <div id="statusLog" class="bg-gray-100 rounded p-3 text-xs font-mono text-gray-800 h-64 overflow-y-auto scrollable-container"></div>
-                        </div>
-                        
-                        <div class="mt-4 flex justify-between">
-                            <button id="cancelProcessingBtn" class="inline-flex items-center text-white bg-red-600 hover:bg-red-700 font-medium py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2">
-                                <i class="fas fa-stop mr-2"></i> Cancel
-                            </button>
-                            
-                            <button id="viewResultsBtn" class="inline-flex items-center text-white bg-green-600 hover:bg-green-700 font-medium py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2 hidden">
-                                <i class="fas fa-table mr-2"></i> View Results
-                            </button>
+                        <div>
+                            <label for="chunk-start" class="block text-gray-700 mb-1 tooltip">
+                                Start Index
+                                <span class="tooltiptext">Starting index for processing (0 for beginning)</span>
+                            </label>
+                            <input type="number" id="chunk-start" value="0" min="0"
+                                class="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                         </div>
                     </div>
                 </div>
             </div>
-        </div>
-        
-        <!-- Data Tab -->
-        <div id="dataTab" class="tab-content hidden">
-            <div class="bg-white rounded-lg shadow-md p-6 mb-8">
-                <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
-                    <h2 class="text-xl font-semibold text-gray-800 mb-4 md:mb-0">Processed Tours</h2>
-                    
-                    <div class="flex flex-col md:flex-row space-y-2 md:space-y-0 md:space-x-2">
-                        <button id="downloadAllBtn" class="inline-flex items-center text-white bg-green-600 hover:bg-green-700 font-medium py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2">
-                            <i class="fas fa-download mr-2"></i> Download All
-                        </button>
-                        
-                        <button id="clearDataBtn" class="inline-flex items-center text-white bg-red-600 hover:bg-red-700 font-medium py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2">
-                            <i class="fas fa-trash mr-2"></i> Clear Data
-                        </button>
+
+            <div class="flex flex-wrap gap-3 mb-6">
+                <button id="count-tours-btn" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50">
+                    Count Tours
+                </button>
+                <button id="start-export-btn" class="px-4 py-2 bg-4f840d text-white rounded-lg hover:bg-446f0b focus:outline-none focus:ring-2 focus:ring-4f840d focus:ring-opacity-50">
+                    Start Tours Export
+                </button>
+                <button id="export-clear-btn" class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50 hidden">
+                    Clear Results
+                </button>
+            </div>
+
+            <div id="tours-count-result" class="p-3 bg-blue-100 text-blue-800 rounded-lg mb-4 hidden">
+                <p id="tours-count-text"></p>
+            </div>
+
+            <div id="status-section" class="hidden">
+                <h3 class="text-lg font-semibold mb-2">Processing Status</h3>
+                <div class="mb-2">
+                    <div class="flex justify-between mb-1">
+                        <span id="status-text" class="text-sm text-gray-700">Idle</span>
+                        <span id="status-percent" class="text-sm text-gray-700">0%</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-2.5">
+                        <div id="status-bar" class="bg-blue-500 h-2.5 rounded-full" style="width: 0%"></div>
                     </div>
                 </div>
-                
-                <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-4">
-                    <div class="w-full md:w-1/2 mb-2 md:mb-0">
-                        <input type="text" id="dataSearchInput" placeholder="Search tours..." class="w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
-                    </div>
-                    
-                    <div class="w-full md:w-auto flex space-x-2">
-                        <select id="dataSortField" class="px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500">
-                            <option value="name">Name</option>
-                            <option value="sport">Sport</option>
-                            <option value="type">Type</option>
-                            <option value="distance_km">Distance</option>
-                            <option value="date">Date</option>
-                        </select>
-                        
-                        <button id="dataSortDirection" class="inline-flex items-center bg-gray-200 hover:bg-gray-300 font-medium py-2 px-3 rounded-lg focus:outline-none">
-                            <i class="fas fa-sort-up text-gray-600"></i>
-                        </button>
-                    </div>
+                <div class="mb-2 text-sm">
+                    <span id="status-completed">0</span> / <span id="status-total">0</span> tours processed
                 </div>
-                
-                <!-- Tour list for data tab -->
+                <div id="log-container" class="log-container">
+                    <div id="log-content"></div>
+                </div>
+            </div>
+
+            <div id="results-section" class="mt-6 hidden">
+                <h3 class="text-lg font-semibold mb-4">Results</h3>
                 <div class="overflow-x-auto">
                     <table class="min-w-full bg-white">
                         <thead>
                             <tr>
-                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Sport</th>
-                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
-                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Distance</th>
-                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Duration</th>
-                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-                                <th class="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                                <th class="px-6 py-3 border-b border-gray-200 bg-gray-50 text-left text-xs leading-4 font-medium text-gray-500 uppercase tracking-wider">
+                                    ID
+                                </th>
+                                <th class="px-6 py-3 border-b border-gray-200 bg-gray-50 text-left text-xs leading-4 font-medium text-gray-500 uppercase tracking-wider">
+                                    Name
+                                </th>
+                                <th class="px-6 py-3 border-b border-gray-200 bg-gray-50 text-left text-xs leading-4 font-medium text-gray-500 uppercase tracking-wider">
+                                    Date
+                                </th>
+                                <th class="px-6 py-3 border-b border-gray-200 bg-gray-50 text-left text-xs leading-4 font-medium text-gray-500 uppercase tracking-wider">
+                                    Type
+                                </th>
+                                <th class="px-6 py-3 border-b border-gray-200 bg-gray-50 text-left text-xs leading-4 font-medium text-gray-500 uppercase tracking-wider">
+                                    Distance
+                                </th>
+                                <th class="px-6 py-3 border-b border-gray-200 bg-gray-50 text-left text-xs leading-4 font-medium text-gray-500 uppercase tracking-wider">
+                                    Duration
+                                </th>
+                                <th class="px-6 py-3 border-b border-gray-200 bg-gray-50 text-left text-xs leading-4 font-medium text-gray-500 uppercase tracking-wider">
+                                    Up
+                                </th>
+                                <th class="px-6 py-3 border-b border-gray-200 bg-gray-50 text-left text-xs leading-4 font-medium text-gray-500 uppercase tracking-wider">
+                                    Down
+                                </th>
+                                <th class="px-6 py-3 border-b border-gray-200 bg-gray-50 text-left text-xs leading-4 font-medium text-gray-500 uppercase tracking-wider">
+                                    Actions
+                                </th>
                             </tr>
                         </thead>
-                        <tbody id="dataTable" class="text-gray-700">
-                            <!-- Tours will be populated here -->
+                        <tbody id="results-table-body">
+                            <!-- Results will be inserted here -->
                         </tbody>
                     </table>
                 </div>
-                
-                <!-- Empty state for data -->
-                <div id="dataEmptyState" class="text-center py-8">
-                    <i class="fas fa-folder-open text-6xl text-gray-400 mb-4"></i>
-                    <h3 class="text-xl font-medium text-gray-700">No Tours Processed</h3>
-                    <p class="text-gray-500 mt-2">Go to the Configure tab to start processing tours</p>
-                </div>
-            </div>
-            
-            <!-- Tour details panel -->
-            <div id="tourDetails" class="bg-white rounded-lg shadow-md p-6 mb-8 hidden">
-                <h2 class="text-xl font-semibold text-gray-800 mb-4">Tour Details</h2>
-                
-                <h3 id="detailName" class="text-xl font-bold text-gray-800 mb-4">Tour Name</h3>
-                
-                <div class="grid grid-cols-2 md:grid-cols-3 gap-4 mb-6">
-                    <div>
-                        <h4 class="text-sm font-medium text-gray-500">Distance</h4>
-                        <p id="detailDistance" class="text-lg font-bold text-gray-800">12.5 km</p>
-                    </div>
-                    
-                    <div>
-                        <h4 class="text-sm font-medium text-gray-500">Duration</h4>
-                        <p id="detailDuration" class="text-lg font-bold text-gray-800">1.5 h</p>
-                    </div>
-                    
-                    <div>
-                        <h4 class="text-sm font-medium text-gray-500">Sport</h4>
-                        <p id="detailSport" class="text-lg font-bold text-gray-800">Hiking</p>
-                    </div>
-                    
-                    <div>
-                        <h4 class="text-sm font-medium text-gray-500">Type</h4>
-                        <p id="detailType" class="text-lg font-bold text-gray-800">Recorded</p>
-                    </div>
-                    
-                    <div>
-                        <h4 class="text-sm font-medium text-gray-500">Elevation Up</h4>
-                        <p id="detailElevationUp" class="text-lg font-bold text-gray-800">250 m</p>
-                    </div>
-                    
-                    <div>
-                        <h4 class="text-sm font-medium text-gray-500">Elevation Down</h4>
-                        <p id="detailElevationDown" class="text-lg font-bold text-gray-800">250 m</p>
-                    </div>
-                </div>
-                
-                <div class="flex flex-col md:flex-row gap-4 mt-4">
-                    <a id="detailUrl" href="#" target="_blank" class="inline-flex items-center text-white bg-blue-600 hover:bg-blue-700 font-medium py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2">
-                        <i class="fas fa-external-link-alt mr-2"></i> Open in Komoot
-                    </a>
-                    
-                    <a id="detailDownload" href="#" class="inline-flex items-center text-white bg-green-600 hover:bg-green-700 font-medium py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2">
-                        <i class="fas fa-download mr-2"></i> Download GPX
-                    </a>
-                </div>
-                
-                <div id="tourImages" class="mt-8 hidden">
-                    <h4 class="text-lg font-semibold text-gray-800 mb-3">Tour Images</h4>
-                    <div id="imageGallery" class="grid grid-cols-2 md:grid-cols-3 gap-4">
-                        <!-- Images will be populated here -->
-                    </div>
-                    <div class="mt-4">
-                        <a id="downloadImagesBtn" href="#" class="inline-flex items-center text-white bg-indigo-600 hover:bg-indigo-700 font-medium py-2 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
-                            <i class="fas fa-images mr-2"></i> Download All Images
-                        </a>
-                    </div>
-                </div>
             </div>
         </div>
-    </div>
-    
-    <!-- Help Modal -->
-    <div id="helpModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 hidden">
-        <div class="bg-white rounded-lg shadow-xl p-6 max-w-2xl w-full max-h-screen overflow-y-auto">
-            <div class="flex justify-between items-start mb-4">
-                <h2 class="text-2xl font-bold text-gray-800">Komoot GPX Downloader Help</h2>
-                <button id="closeHelpBtn" class="text-gray-500 hover:text-gray-700">
-                    <i class="fas fa-times text-xl"></i>
+
+        <!-- Collections Tab Content -->
+        <div id="content-collections" class="bg-white p-6 rounded-lg shadow-md mb-8 hidden">
+            <h2 class="text-xl font-semibold mb-4">Collections Export</h2>
+            
+            <div class="mb-6">
+                <div class="mb-4">
+                    <label for="collection-urls" class="block text-gray-700 mb-2">URL of your public collections</label>
+                    <textarea id="collection-urls" rows="1" class="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" 
+                        placeholder="e.g. https://www.komoot.com/user/markus/collections/personal"></textarea>
+                </div>
+                <button id="scrape-public-btn" class="px-4 py-2 bg-4f840d text-white rounded-lg hover:bg-446f0b focus:outline-none focus:ring-2 focus:ring-4f840d focus:ring-opacity-50">
+                    Get Public Collections
                 </button>
             </div>
-            
-            <div class="space-y-6 text-gray-700">
-                <div>
-                    <h3 class="text-lg font-semibold mb-2">Overview</h3>
-                    <p>This tool allows you to download your Komoot tours as GPX files, including highlights (POIs) that are normally not included in Komoot's standard export.</p>
+
+            <div id="collections-status-section" class="hidden">
+                <div class="mb-2">
+                    <div class="flex justify-between mb-1">
+                        <span id="collections-status-text" class="text-sm text-gray-700">Idle</span>
+                        <span id="collections-status-percent" class="text-sm text-gray-700">0%</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-2.5">
+                        <div id="collections-status-bar" class="bg-blue-500 h-2.5 rounded-full" style="width: 0%"></div>
+                    </div>
                 </div>
-                
-                <div>
-                    <h3 class="text-lg font-semibold mb-2">Getting Started</h3>
-                    <ol class="list-decimal list-inside space-y-2">
-                        <li>Enter your Komoot email and password or use anonymous mode for public tours</li>
-                        <li>Choose to download a specific tour (by ID) or all your tours</li>
-                        <li>Configure any additional options</li>
-                        <li>Click "Start Processing" to begin</li>
-                    </ol>
+                <div class="mb-2 text-sm">
+                    <span id="collections-status-completed">0</span> / <span id="collections-status-total">0</span> processed
                 </div>
-                
-                <div>
-                    <h3 class="text-lg font-semibold mb-2">Finding a Tour ID</h3>
-                    <p>The Tour ID is the number in the URL when viewing a tour on Komoot:</p>
-                    <p class="bg-gray-100 p-2 rounded font-mono text-sm mt-2">https://www.komoot.com/tour/1234567890</p>
-                    <p class="mt-2">In this example, <strong>1234567890</strong> is the Tour ID.</p>
-                </div>
-                
-                <div>
-                    <h3 class="text-lg font-semibold mb-2">Download Options</h3>
-                    <ul class="list-disc list-inside space-y-2">
-                        <li><strong>Specific Tour ID:</strong> Download a single tour using its ID</li>
-                        <li><strong>All My Tours:</strong> Download all your tours that match the selected filter type</li>
-                        <li><strong>Check Count:</strong> See how many tours you have before downloading</li>
-                    </ul>
-                </div>
-                
-                <div>
-                    <h3 class="text-lg font-semibold mb-2">Advanced Options</h3>
-                    <ul class="list-disc list-inside space-y-2">
-                        <li><strong>Skip existing files:</strong> Don't overwrite files that already exist</li>
-                        <li><strong>Use ID as filename:</strong> Use only the tour ID for the filename</li>
-                        <li><strong>Add date to filename:</strong> Prepend YYYY-MM-DD to filename</li>
-                        <li><strong>Max title length:</strong> Limit the length of tour names in filenames</li>
-                        <li><strong>Max description length:</strong> Limit the length of POI descriptions</li>
-                        <li><strong>Download tour photos:</strong> Download photos from your recorded tours</li>
-                        <li><strong>Chunk size:</strong> When downloading many tours, process this many at a time</li>
-                    </ul>
-                </div>
-                
-                <div>
-                    <h3 class="text-lg font-semibold mb-2">Anonymous Mode</h3>
-                    <p>Anonymous mode allows you to download public tours without logging in, but only one tour at a time.</p>
-                    <p class="mt-2">Note: You need the exact Tour ID, and the tour must be public.</p>
+                <div id="collections-log-container" class="log-container">
+                    <div id="collections-log-content"></div>
                 </div>
             </div>
+
+            <div id="collections-results-section" class="mt-6 hidden">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-semibold">Collections Found</h3>
+                    <div class="flex gap-2">
+                        <button id="clear-collections-btn" class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50">
+                            Clear Collections
+                        </button>
+                    </div>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full bg-white">
+                        <thead>
+                            <tr>
+                                <th class="px-6 py-3 border-b border-gray-200 bg-gray-50 text-left text-xs leading-4 font-medium text-gray-500 uppercase tracking-wider">
+                                    Select
+                                </th>
+                                <th class="px-6 py-3 border-b border-gray-200 bg-gray-50 text-left text-xs leading-4 font-medium text-gray-500 uppercase tracking-wider">
+                                    Name
+                                </th>
+                                <th class="px-6 py-3 border-b border-gray-200 bg-gray-50 text-left text-xs leading-4 font-medium text-gray-500 uppercase tracking-wider">
+                                    ID
+                                </th>
+                                <th class="px-6 py-3 border-b border-gray-200 bg-gray-50 text-left text-xs leading-4 font-medium text-gray-500 uppercase tracking-wider">
+                                    Slug
+                                </th>
+                                <th class="px-6 py-3 border-b border-gray-200 bg-gray-50 text-left text-xs leading-4 font-medium text-gray-500 uppercase tracking-wider">
+                                    Tours
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody id="collections-table-body">
+                            <!-- Collections will be inserted here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div id="download-collections-section" class="mt-6 hidden">
+                <h3 class="text-lg font-semibold mb-4">Download Collection Tours</h3>
+                
+                <!-- Modified Output Directory with Folder Selection -->
+                <div class="mb-4">
+                    <label for="collections-output-dir" class="block text-gray-700 mb-2">Output Directory</label>
+                    <div class="flex items-center">
+                        <input type="text" id="collections-output-dir" class="flex-grow px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                        <button type="button" class="ml-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 folder-selection-btn" data-target="collections-output-dir">
+                            Browse...
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                    <div>
+                        <h4 class="font-semibold mb-2">Download Options</h4>
+                        <div class="space-y-2">
+                            <label class="inline-flex items-center">
+                                <input type="checkbox" id="collections-include-metadata" class="form-checkbox h-5 w-5 text-blue-600" checked>
+                                <span class="ml-2 text-gray-700 tooltip">
+                                    Include Metadata
+                                    <span class="tooltiptext">Save collection metadata with GPX files</span>
+                                </span>
+                            </label>
+                            <div class="block">
+                                <label class="inline-flex items-center">
+                                    <input type="checkbox" id="collections-download-images" class="form-checkbox h-5 w-5 text-blue-600">
+                                    <span class="ml-2 text-gray-700 tooltip">
+                                        Download Images
+                                        <span class="tooltiptext">Download all images associated with tour</span>
+                                    </span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                    <div>
+                        <h4 class="font-semibold mb-2">GPX Options</h4>
+                        <div class="space-y-2">
+                            <label class="inline-flex items-center">
+                                <input type="checkbox" id="collections-no-poi" class="form-checkbox h-5 w-5 text-blue-600">
+                                <span class="ml-2 text-gray-700 tooltip">
+                                    No POIs
+                                    <span class="tooltiptext">Exclude points of interest from the GPX file</span>
+                                </span>
+                            </label>
+                            <div class="block">
+                                <label class="inline-flex items-center">
+                                    <input type="checkbox" id="collections-skip-existing" class="form-checkbox h-5 w-5 text-blue-600" checked>
+                                    <span class="ml-2 text-gray-700 tooltip">
+                                        Skip Existing
+                                        <span class="tooltiptext">Skip tours that already have a GPX file</span>
+                                    </span>
+                                </label>
+                            </div>
+                            <div class="block">
+                                <label class="inline-flex items-center">
+                                    <input type="checkbox" id="collections-add-date" class="form-checkbox h-5 w-5 text-blue-600" checked>
+                                    <span class="ml-2 text-gray-700 tooltip">
+                                        Add Date Prefix
+                                        <span class="tooltiptext">Add date to filename (e.g., "2023-04-15_")</span>
+                                    </span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <button id="download-collection-tours-btn" class="px-4 py-2 bg-4f840d text-white rounded-lg hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50">
+                    Download Selected Collections
+                </button>
+            </div>
+        </div>
+
+        <!-- Floating progress indicator (only shown during processing) -->
+        <div id="floating-progress" class="floating-progress hidden p-4 bg-white shadow-lg rounded-lg">
+            <div class="flex justify-between mb-1">
+                <span id="floating-status-text" class="text-sm text-gray-700">Processing...</span>
+                <span id="floating-status-percent" class="text-sm text-gray-700">0%</span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-2.5">
+                <div id="floating-status-bar" class="bg-blue-500 h-2.5 rounded-full" style="width: 0%"></div>
+            </div>
+            <div class="mt-2 text-sm text-center">
+                <span id="floating-status-completed">0</span> / <span id="floating-status-total">0</span> processed
+            </div>
+        </div>
+
+        <!-- Desktop app info banner -->
+        <div id="desktop-app-info" class="desktop-only p-4 bg-blue-100 text-blue-800 rounded-lg mb-4 text-center">
+            <p>Running as desktop application. Files will be saved to the selected folder.</p>
         </div>
     </div>
-    
+
     <script>
-        // Global state
-        const state = {
-            tours: [],
-            filteredTours: [],
-            sortField: null,
-            sortDirection: 'asc',
-            processing: false,
-            processingStartTime: null,
-            processingTimer: null,
-            activeTab: 'configTab',
-            totalToursPlanned: 0,
-            totalToursRecorded: 0,
-            totalToursAll: 0
-        };
+        // Check if running in pywebview
+        const isPywebview = window.pywebview !== undefined;
         
-        // Show notification
-        function showNotification(message, type = 'info') {
-            const notificationEl = document.createElement('div');
-            notificationEl.className = `notification ${type === 'error' ? 'bg-red-500' : type === 'success' ? 'bg-green-500' : 'bg-blue-500'} text-white p-4 rounded-lg`;
-            
-            notificationEl.innerHTML = `
-                <div class="flex items-center">
-                    <i class="fas ${type === 'error' ? 'fa-exclamation-circle' : type === 'success' ? 'fa-check-circle' : 'fa-info-circle'} mr-3 text-lg"></i>
-                    <span>${message}</span>
-                </div>
-            `;
-            
-            document.body.appendChild(notificationEl);
-            
-            // Remove after 5 seconds
-            setTimeout(() => {
-                notificationEl.style.opacity = '0';
-                notificationEl.style.transform = 'translateX(100%)';
-                notificationEl.style.transition = 'all 0.3s ease-out';
-                
-                setTimeout(() => {
-                    notificationEl.remove();
-                }, 300);
-            }, 5000);
-        }
-        
-        // Format tour type
-        function formatTourType(type) {
-            if (!type) return '-';
-            
-            // Convert from API format (tour_planned, tour_recorded) to display format
-            if (type === 'tour_planned') return 'Planned';
-            if (type === 'tour_recorded') return 'Recorded';
-            
-            // Convert first letter to uppercase
-            return type.charAt(0).toUpperCase() + type.slice(1);
-        }
-        
-        // Show tab content
-        function showTab(tabId) {
-            // Hide all tabs
-            document.querySelectorAll('.tab-content').forEach(tab => {
-                tab.classList.add('hidden');
+        // If running in pywebview, show desktop-only elements
+        if (isPywebview) {
+            document.querySelectorAll('.desktop-only').forEach(el => {
+                el.style.display = 'block';
             });
-            
-            // Reset all tab buttons
-            document.querySelectorAll('#configTabBtn, #dataTabBtn').forEach(btn => {
-                btn.classList.remove('border-blue-500');
-                btn.classList.add('border-transparent');
-            });
-            
-            // Show selected tab
-            document.getElementById(tabId).classList.remove('hidden');
-            
-            // Highlight the selected tab button
-            document.getElementById(`${tabId}Btn`).classList.remove('border-transparent');
-            document.getElementById(`${tabId}Btn`).classList.add('border-blue-500');
-            
-            // Save active tab to state
-            state.activeTab = tabId;
         }
         
-        // Add a log entry to the processing status
-        function addLog(message) {
-            const logEl = document.getElementById('statusLog');
-            const entry = document.createElement('div');
-            
-            // Create timestamp
-            const now = new Date();
-            const hours = now.getHours().toString().padStart(2, '0');
-            const minutes = now.getMinutes().toString().padStart(2, '0');
-            const seconds = now.getSeconds().toString().padStart(2, '0');
-            const timestamp = `${hours}:${minutes}:${seconds}`;
-            
-            // Add log entry
-            entry.textContent = `[${timestamp}] ${message}`;
-            logEl.appendChild(entry);
-            
-            // Scroll to bottom
-            logEl.scrollTop = logEl.scrollHeight;
-        }
-        
-        // Update processing progress
-        function updateProcessingProgress(progress, completed, total) {
-            const progressBar = document.getElementById('progressBar');
-            const progressPercent = document.getElementById('progressPercent');
-            const statusTours = document.getElementById('statusTours');
-            
-            // Update progress bar
-            const progressValue = Math.round(progress * 100);
-            progressBar.style.width = `${progressValue}%`;
-            progressPercent.textContent = `${progressValue}%`;
-            
-            // Update tours counter
-            statusTours.textContent = `${completed}/${total}`;
-        }
-        
-        // Stop processing
-        function stopProcessing() {
-            state.processing = false;
-            
-            // Clear the timer
-            if (state.processingTimer) {
-                clearInterval(state.processingTimer);
-                state.processingTimer = null;
+        // Function to extract slug from URL or collection name
+        function extractSlug(url, name) {
+            // Try to extract slug from URL first
+            if (url) {
+                const match = url.match(/\/collection\/\d+\/?-?([a-z0-9-]+)?/);
+                if (match && match[1]) {
+                    return match[1];
+                }
             }
             
-            // Enable the start button
-            document.getElementById('startProcessingBtn').disabled = false;
-            document.getElementById('startProcessingBtn').innerHTML = '<i class="fas fa-play mr-2"></i> Start Processing';
+            // If no URL or no slug in URL, generate slug from name
+            if (name) {
+                return name.toLowerCase()
+                    .replace(/[^\w\s-]/g, '') // Remove special characters
+                    .replace(/\s+/g, '-')     // Replace spaces with hyphens
+                    .replace(/-+/g, '-')      // Remove consecutive hyphens
+                    .substring(0, 50);        // Limit length
+            }
             
-            // Show the view results button
-            document.getElementById('viewResultsBtn').classList.remove('hidden');
+            return "";
         }
         
-        // Process the results
-        function processResults(results) {
-            // Save tours to state
-            state.tours = results;
-            state.filteredTours = [...results];
-            
-            // Update the data table
-            updateDataTable();
-            
-            // Hide empty state, show results
-            document.getElementById('dataEmptyState').classList.add('hidden');
-            
-            // Show notification
-            showNotification(`Successfully processed ${results.length} tours`, 'success');
+        // Function to fetch and update the selected folder
+        function updateSelectedFolder() {
+            fetch('/api/selected-folder')
+                .then(response => response.json())
+                .then(data => {
+                    const outputDirInput = document.getElementById('output-dir');
+                    const collectionsOutputDirInput = document.getElementById('collections-output-dir');
+                    
+                    if (outputDirInput) outputDirInput.value = data.path;
+                    if (collectionsOutputDirInput) collectionsOutputDirInput.value = data.path;
+                    
+                    // Display the folder selection elements if pywebview is available
+                    document.querySelectorAll('.folder-selection-btn').forEach(btn => {
+                        btn.style.display = isPywebview ? 'inline-block' : 'none';
+                    });
+                })
+                .catch(error => console.error('Error fetching selected folder:', error));
         }
+
+        // DOM Elements
+        const tabTours = document.getElementById('tab-tours');
+        const tabCollections = document.getElementById('tab-collections');
+        const contentTours = document.getElementById('content-tours');
+        const contentCollections = document.getElementById('content-collections');
         
-        // Update the data table
-        function updateDataTable() {
-            const tableBody = document.getElementById('dataTable');
-            tableBody.innerHTML = '';
+        // Tours tab elements
+        const anonymousCheckbox = document.getElementById('anonymous-checkbox');
+        const loginSection = document.getElementById('login-section');
+        const emailInput = document.getElementById('email');
+        const passwordInput = document.getElementById('password');
+        const allToursRadio = document.getElementById('all-tours');
+        const singleTourRadio = document.getElementById('single-tour');
+        const tourIdInput = document.getElementById('tour-id-input');
+        const tourIdField = document.getElementById('tour-id');
+        const filterSection = document.getElementById('filter-section');
+        const filterTypeSelect = document.getElementById('filter-type');
+        const outputDirInput = document.getElementById('output-dir');
+        const optionsSection = document.getElementById('options-section');
+        const optionsToggleBtn = document.getElementById('options-toggle-btn');
+        const noPoiCheckbox = document.getElementById('no-poi');
+        const skipExistingCheckbox = document.getElementById('skip-existing');
+        const idFilenameCheckbox = document.getElementById('id-filename');
+        const addDateCheckbox = document.getElementById('add-date');
+        const maxTitleLengthInput = document.getElementById('max-title-length');
+        const maxDescLengthInput = document.getElementById('max-desc-length');
+        const downloadImagesCheckbox = document.getElementById('download-images');
+        const chunkingSection = document.getElementById('chunking-section');
+        const chunkSizeInput = document.getElementById('chunk-size');
+        const chunkStartInput = document.getElementById('chunk-start');
+        const countToursBtn = document.getElementById('count-tours-btn');
+        const startExportBtn = document.getElementById('start-export-btn');
+        const exportClearBtn = document.getElementById('export-clear-btn');
+        const toursCountResult = document.getElementById('tours-count-result');
+        const toursCountText = document.getElementById('tours-count-text');
+        const statusSection = document.getElementById('status-section');
+        const statusText = document.getElementById('status-text');
+        const statusPercent = document.getElementById('status-percent');
+        const statusBar = document.getElementById('status-bar');
+        const statusCompleted = document.getElementById('status-completed');
+        const statusTotal = document.getElementById('status-total');
+        const logContainer = document.getElementById('log-container');
+        const logContent = document.getElementById('log-content');
+        const resultsSection = document.getElementById('results-section');
+        const resultsTableBody = document.getElementById('results-table-body');
+        
+        // Collections tab elements
+        const collectionUrlsInput = document.getElementById('collection-urls');
+        const scrapePublicBtn = document.getElementById('scrape-public-btn');
+        const collectionsStatusSection = document.getElementById('collections-status-section');
+        const collectionsStatusText = document.getElementById('collections-status-text');
+        const collectionsStatusPercent = document.getElementById('collections-status-percent');
+        const collectionsStatusBar = document.getElementById('collections-status-bar');
+        const collectionsStatusCompleted = document.getElementById('collections-status-completed');
+        const collectionsStatusTotal = document.getElementById('collections-status-total');
+        const collectionsLogContainer = document.getElementById('collections-log-container');
+        const collectionsLogContent = document.getElementById('collections-log-content');
+        const collectionsResultsSection = document.getElementById('collections-results-section');
+        const collectionsTableBody = document.getElementById('collections-table-body');
+        const clearCollectionsBtn = document.getElementById('clear-collections-btn');
+        const downloadCollectionsSection = document.getElementById('download-collections-section');
+        const collectionsOutputDirInput = document.getElementById('collections-output-dir');
+        const collectionsIncludeMetadataCheckbox = document.getElementById('collections-include-metadata');
+        const collectionsDownloadImagesCheckbox = document.getElementById('collections-download-images');
+        const collectionsNoPoiCheckbox = document.getElementById('collections-no-poi');
+        const collectionsSkipExistingCheckbox = document.getElementById('collections-skip-existing');
+        const collectionsAddDateCheckbox = document.getElementById('collections-add-date');
+        const downloadCollectionToursBtn = document.getElementById('download-collection-tours-btn');
+        
+        // Floating progress elements
+        const floatingProgress = document.getElementById('floating-progress');
+        const floatingStatusText = document.getElementById('floating-status-text');
+        const floatingStatusPercent = document.getElementById('floating-status-percent');
+        const floatingStatusBar = document.getElementById('floating-status-bar');
+        const floatingStatusCompleted = document.getElementById('floating-status-completed');
+        const floatingStatusTotal = document.getElementById('floating-status-total');
+        
+        // State variables
+        let statusIntervalId = null;
+        let collectionsStatusIntervalId = null;
+        let selectedCollections = [];
+        
+        // Initialize folder selection buttons
+        document.addEventListener('DOMContentLoaded', function() {
+            // Call once on page load to update directories
+            updateSelectedFolder();
             
-            if (state.filteredTours.length === 0) {
-                document.getElementById('dataEmptyState').classList.remove('hidden');
+            // Add folder selection functionality to each button
+            document.querySelectorAll('.folder-selection-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const targetInput = document.getElementById(this.dataset.target);
+                    
+                    if (isPywebview) {
+                        // Use pywebview's folder dialog
+                        window.pywebview.api.select_folder().then(result => {
+                            if (result) {
+                                // Update the input field
+                                targetInput.value = result;
+                                
+                                // Update the server
+                                fetch('/api/select-folder', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ path: result })
+                                });
+                            }
+                        });
+                    } else {
+                        // Fallback if not running in pywebview
+                        const path = prompt('Enter folder path:', targetInput.value);
+                        if (path) {
+                            // Update the input field
+                            targetInput.value = path;
+                            
+                            // Update the server
+                            fetch('/api/select-folder', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ path: path })
+                            });
+                        }
+                    }
+                });
+            });
+        });
+        
+        // Options toggle button
+        optionsToggleBtn.addEventListener('click', () => {
+            if (optionsSection.classList.contains('hidden')) {
+                optionsSection.classList.remove('hidden');
+                optionsToggleBtn.textContent = 'Hide Options';
+            } else {
+                optionsSection.classList.add('hidden');
+                optionsToggleBtn.textContent = 'Show Options';
+            }
+        });
+        
+        // Tab Switching
+        tabTours.addEventListener('click', () => {
+            tabTours.classList.add('active');
+            tabCollections.classList.remove('active');
+            contentTours.classList.remove('hidden');
+            contentCollections.classList.add('hidden');
+        });
+        
+        tabCollections.addEventListener('click', () => {
+            tabCollections.classList.add('active');
+            tabTours.classList.remove('active');
+            contentCollections.classList.remove('hidden');
+            contentTours.classList.add('hidden');
+        });
+        
+        // Anonymous Mode Toggle
+        anonymousCheckbox.addEventListener('change', () => {
+            if (anonymousCheckbox.checked) {
+                loginSection.classList.add('hidden');
+                allToursRadio.disabled = true;
+                singleTourRadio.checked = true;
+                tourIdInput.classList.remove('hidden');
+                filterSection.classList.add('hidden');
+            } else {
+                loginSection.classList.remove('hidden');
+                allToursRadio.disabled = false;
+                if (allToursRadio.checked) {
+                    tourIdInput.classList.add('hidden');
+                    filterSection.classList.remove('hidden');
+                }
+            }
+        });
+        
+        // Tour Selection Type
+        allToursRadio.addEventListener('change', () => {
+            if (allToursRadio.checked) {
+                tourIdInput.classList.add('hidden');
+                filterSection.classList.remove('hidden');
+            }
+        });
+        
+        singleTourRadio.addEventListener('change', () => {
+            if (singleTourRadio.checked) {
+                tourIdInput.classList.remove('hidden');
+                filterSection.classList.add('hidden');
+            }
+        });
+        
+        // Count Tours
+        countToursBtn.addEventListener('click', async () => {
+            if (anonymousCheckbox.checked) {
+                alert('Tour counting is not available in anonymous mode');
                 return;
             }
             
-            document.getElementById('dataEmptyState').classList.add('hidden');
-            
-            // Create a row for each tour
-            state.filteredTours.forEach(tour => {
-                const row = document.createElement('tr');
-                row.className = 'border-b border-gray-200 hover:bg-gray-100';
-                row.setAttribute('data-tour-id', tour.id);
-                
-                row.innerHTML = `
-                    <td class="px-4 py-3">${tour.name || '-'}</td>
-                    <td class="px-4 py-3">${tour.sport || '-'}</td>
-                    <td class="px-4 py-3">${formatTourType(tour.type) || '-'}</td>
-                    <td class="px-4 py-3">${tour.distance_km || '-'} km</td>
-                    <td class="px-4 py-3">${tour.duration || '-'} h</td>
-                    <td class="px-4 py-3">${tour.date || '-'}</td>
-                    <td class="px-4 py-3">
-                        <div class="flex space-x-2">
-                            <button class="view-tour-btn text-blue-600 hover:text-blue-800">
-                                <i class="fas fa-eye"></i>
-                            </button>
-                            <a href="/api/download/${tour.id}" class="text-green-600 hover:text-green-800">
-                                <i class="fas fa-download"></i>
-                            </a>
-                            <a href="${tour.url}" target="_blank" class="text-indigo-600 hover:text-indigo-800">
-                                <i class="fas fa-external-link-alt"></i>
-                            </a>
-                        </div>
-                    </td>
-                `;
-                
-                tableBody.appendChild(row);
-            });
-            
-            // Add event listeners to view buttons
-            document.querySelectorAll('.view-tour-btn').forEach(btn => {
-                btn.addEventListener('click', function() {
-                    const tourId = this.closest('tr').getAttribute('data-tour-id');
-                    showTourDetails(tourId);
-                });
-            });
-            
-            // Make rows clickable to show details
-            document.querySelectorAll('#dataTable tr').forEach(row => {
-                row.addEventListener('click', function(e) {
-                    // Don't trigger if clicking on a button
-                    if (e.target.closest('button') || e.target.closest('a')) {
-                        return;
-                    }
-                    
-                    const tourId = this.getAttribute('data-tour-id');
-                    showTourDetails(tourId);
-                });
-            });
-        }
-        
-        // Show tour details
-        function showTourDetails(tourId) {
-            const tour = state.tours.find(r => r.id === tourId);
-            if (!tour) return;
-            
-            // Update details panel
-            document.getElementById('detailName').textContent = tour.name || 'Unknown tour';
-            document.getElementById('detailDistance').textContent = `${tour.distance_km || '-'} km`;
-            document.getElementById('detailDuration').textContent = `${tour.duration || '-'} h`;
-            document.getElementById('detailSport').textContent = tour.sport || '-';
-            document.getElementById('detailType').textContent = formatTourType(tour.type) || '-';
-            
-            // Format elevation to whole numbers
-            const elevationUp = tour.elevation_up ? Math.floor(parseFloat(tour.elevation_up)) : '-';
-            const elevationDown = tour.elevation_down ? Math.floor(parseFloat(tour.elevation_down)) : '-';
-            
-            document.getElementById('detailElevationUp').textContent = `${elevationUp} m`;
-            document.getElementById('detailElevationDown').textContent = `${elevationDown} m`;
-            
-            // Update links
-            const detailUrl = document.getElementById('detailUrl');
-            const detailDownload = document.getElementById('detailDownload');
-            
-            detailUrl.href = tour.url || '#';
-            detailDownload.href = `/api/download/${tour.id}`;
-            
-            // Show tour images if available
-            showTourImages(tour);
-            
-            // Show details panel
-            document.getElementById('tourDetails').classList.remove('hidden');
-            
-            // Highlight in table
-            highlightTour(tourId);
-        }
-        
-        // Show tour images
-        function showTourImages(tour) {
-            const imageGallery = document.getElementById('imageGallery');
-            const tourImages = document.getElementById('tourImages');
-            const downloadImagesBtn = document.getElementById('downloadImagesBtn');
-            
-            // Check if tour has images
-            if (tour.images && tour.images.length > 0) {
-                // Clear previous images
-                imageGallery.innerHTML = '';
-                
-                // Add each image to the gallery
-                tour.images.forEach(imagePath => {
-                    const imageUrl = `/static/exports/images/${imagePath}`;
-                    
-                    const imageElement = document.createElement('div');
-                    imageElement.className = 'relative group';
-                    imageElement.innerHTML = `
-                        <img src="${imageUrl}" alt="Tour Image" class="w-full h-32 object-cover rounded-lg">
-                        <div class="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                            <a href="${imageUrl}" download class="text-white bg-indigo-600 rounded-full p-2 mx-1">
-                                <i class="fas fa-download"></i>
-                            </a>
-                            <a href="${imageUrl}" target="_blank" class="text-white bg-indigo-600 rounded-full p-2 mx-1">
-                                <i class="fas fa-external-link-alt"></i>
-                            </a>
-                        </div>
-                    `;
-                    
-                    imageGallery.appendChild(imageElement);
-                });
-                
-                // Show the images section
-                tourImages.classList.remove('hidden');
-                
-                // Set up the download all images button
-                downloadImagesBtn.href = `/api/export/images/${tour.id}`;
-            } else {
-                // Hide the images section if no images
-                tourImages.classList.add('hidden');
-            }
-        }
-        
-        // Highlight a tour in the table
-        function highlightTour(tourId) {
-            // Remove highlight from all rows
-            document.querySelectorAll('#dataTable tr').forEach(row => {
-                row.classList.remove('bg-indigo-100');
-            });
-            
-            // Add highlight to the selected row
-            const selectedRow = document.querySelector(`#dataTable tr[data-tour-id="${tourId}"]`);
-            if (selectedRow) {
-                selectedRow.classList.add('bg-indigo-100');
-                
-                // Scroll to the row if needed
-                selectedRow.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-            }
-        }
-        
-        // Filter and sort the data table
-        function filterAndSortData() {
-            const searchInput = document.getElementById('dataSearchInput').value.toLowerCase();
-            
-            // Filter tours
-            state.filteredTours = state.tours.filter(tour => {
-                return (
-                    (tour.name && tour.name.toLowerCase().includes(searchInput)) ||
-                    (tour.sport && tour.sport.toLowerCase().includes(searchInput)) ||
-                    (tour.type && formatTourType(tour.type).toLowerCase().includes(searchInput)) ||
-                    (tour.distance_km && tour.distance_km.toString().includes(searchInput)) ||
-                    (tour.date && tour.date.includes(searchInput))
-                );
-            });
-            
-            // Sort tours if sort field is set
-            if (state.sortField) {
-                state.filteredTours.sort((a, b) => {
-                    let valueA = a[state.sortField];
-                    let valueB = b[state.sortField];
-                    
-                    // Handle special cases
-                    if (state.sortField === 'distance_km') {
-                        valueA = parseFloat(valueA) || 0;
-                        valueB = parseFloat(valueB) || 0;
-                    }
-                    
-                    // Perform the comparison
-                    if (valueA < valueB) {
-                        return state.sortDirection === 'asc' ? -1 : 1;
-                    }
-                    if (valueA > valueB) {
-                        return state.sortDirection === 'asc' ? 1 : -1;
-                    }
-                    return 0;
-                });
-            }
-            
-            // Update the table
-            updateDataTable();
-        }
-        
-        // Check total tours for count display
-        async function checkTotalTours() {
-            const email = document.getElementById('emailInput').value.trim();
-            const password = document.getElementById('passwordInput').value.trim();
-            const filterType = document.getElementById('filterType').value;
+            const email = emailInput.value.trim();
+            const password = passwordInput.value.trim();
+            const filterType = filterTypeSelect.value;
             
             if (!email || !password) {
-                showNotification('Please enter your Komoot email and password', 'error');
+                alert('Please enter your email and password');
                 return;
             }
             
             try {
-                // Disable button while checking
-                const checkButton = document.getElementById('checkToursBtn');
-                checkButton.disabled = true;
-                checkButton.innerHTML = '<i class="fas fa-spinner fa-spin mr-1"></i> Checking...';
-                const infoSpan = document.getElementById('totalToursInfo');
-                infoSpan.textContent = 'Checking...';
+                countToursBtn.disabled = true;
+                countToursBtn.textContent = 'Counting...';
                 
-                const countResponse = await fetch('/api/tour-counts', {
+                const response = await fetch('/api/tour-counts', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        email: email,
-                        password: password,
-                        filterType: filterType
-                    }),
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password, filterType })
                 });
                 
-                if (!countResponse.ok) {
-                    const errorData = await countResponse.json();
-                    throw new Error(errorData.error || 'Failed to get tour count');
+                const data = await response.json();
+                
+                if (data.error) {
+                    throw new Error(data.error);
                 }
                 
-                const countData = await countResponse.json();
-                
-                // Save the tour count based on filter type
-                if (filterType === 'planned') {
-                    state.totalToursPlanned = countData.total_tours;
-                    state.totalToursAll = state.totalToursPlanned;
-                } else if (filterType === 'recorded') {
-                    state.totalToursRecorded = countData.total_tours;
-                    state.totalToursAll = state.totalToursRecorded;
-                } else {
-                    state.totalToursAll = countData.total_tours;
-                }
-                
-                // Update the UI
-                infoSpan.textContent = `Found ${countData.total_tours} tours of type: ${filterType}`;
-                
-                // Re-enable button
-                checkButton.disabled = false;
-                checkButton.innerHTML = '<i class="fas fa-check mr-1"></i> Check Count';
+                toursCountResult.classList.remove('hidden');
+                toursCountText.textContent = `Found ${data.total_tours} tours${filterType !== 'all' ? ' (' + filterTypeSelect.options[filterTypeSelect.selectedIndex].text + ')' : ''}`;
                 
             } catch (error) {
-                console.error("Error checking tour count:", error);
-                showNotification("Failed to check tour count: " + error.message, "error");
-                
-                // Reset button
-                const checkButton = document.getElementById('checkToursBtn');
-                checkButton.disabled = false;
-                checkButton.innerHTML = '<i class="fas fa-check mr-1"></i> Check Count';
-                document.getElementById('totalToursInfo').textContent = 'Error checking tours';
+                alert('Error counting tours: ' + error.message);
+            } finally {
+                countToursBtn.disabled = false;
+                countToursBtn.textContent = 'Count Tours';
             }
-        }
+        });
         
-        // Start processing tours
-        async function startProcessing() {
-            // Get configuration
-            const anonymousMode = document.getElementById('anonymousMode').checked;
-            const email = anonymousMode ? '' : document.getElementById('emailInput').value.trim();
-            const password = anonymousMode ? '' : document.getElementById('passwordInput').value.trim();
-            const tourSelectionType = document.querySelector('input[name="tourSelection"]:checked').value;
-            const filterType = document.getElementById('filterType').value;
-            const includePoi = document.getElementById('includePoi').checked;
-            const skipExisting = document.getElementById('skipExisting').checked;
-            const idFilename = document.getElementById('idFilename').checked;
-            const addDate = document.getElementById('addDate').checked;
-            const maxTitleLength = parseInt(document.getElementById('maxTitleLength').value) || -1;
-            const maxDescLength = parseInt(document.getElementById('maxDescLength').value) || -1;
-            const downloadImages = document.getElementById('downloadImages').checked;
-            const chunkSize = parseInt(document.getElementById('chunkSizeInput').value) || 100;
-            
-            // Get tour selection based on type
-            let tourId;
-            
-            if (tourSelectionType === 'specific') {
-                tourId = document.getElementById('tourIdInput').value.trim();
-                if (!tourId) {
-                    showNotification('Please enter a tour ID', 'error');
-                    return;
-                }
-            } else {
-                tourId = 'all';
-            }
-            
-            // Validate input
-            if (!anonymousMode && !email) {
-                showNotification('Please enter your Komoot email', 'error');
-                return;
-            }
-            
-            if (!anonymousMode && !password) {
-                showNotification('Please enter your Komoot password', 'error');
-                return;
-            }
-            
-            // Update UI for processing mode
-            document.getElementById('emptyState').classList.add('hidden');
-            document.getElementById('processingStatus').classList.remove('hidden');
-            document.getElementById('startProcessingBtn').disabled = true;
-            document.getElementById('startProcessingBtn').innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Processing...';
-            
-            // Clear and reset status displays
-            document.getElementById('statusState').textContent = 'Starting...';
-            document.getElementById('statusTours').textContent = `0/0`;
-            document.getElementById('progressBar').style.width = '0%';
-            document.getElementById('progressPercent').textContent = '0%';
-            document.getElementById('chunkProgress').classList.add('hidden');
-            
-            // Clear log
-            document.getElementById('statusLog').innerHTML = '';
-            addLog('Starting Komoot GPX processor...');
-            addLog(`Mode: ${anonymousMode ? 'Anonymous' : 'Authenticated'}, Tour Selection: ${tourSelectionType}`);
-            
-            // Start timer
-            state.processing = true;
-            state.processingStartTime = new Date();
-            state.processingTimer = setInterval(() => {
-                const elapsed = new Date() - state.processingStartTime;
-                const minutes = Math.floor(elapsed / 60000);
-                const seconds = Math.floor((elapsed % 60000) / 1000);
-                document.getElementById('statusTime').textContent = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-            }, 1000);
-            
+        // Export Clear
+        exportClearBtn.addEventListener('click', async () => {
             try {
-                // Send processing request to the Flask backend
+                await fetch('/api/clear', { method: 'POST' });
+                resultsSection.classList.add('hidden');
+                exportClearBtn.classList.add('hidden');
+                resultsTableBody.innerHTML = '';
+            } catch (error) {
+                console.error('Error clearing results:', error);
+            }
+        });
+        
+        // Start Export
+        startExportBtn.addEventListener('click', () => {
+            // Hide previous results
+            resultsSection.classList.add('hidden');
+            exportClearBtn.classList.add('hidden');
+            
+            // Get parameters
+            const anonymous = anonymousCheckbox.checked;
+            const email = emailInput.value.trim();
+            const password = passwordInput.value.trim();
+            const tourSelection = allToursRadio.checked ? 'all' : tourIdField.value.trim();
+            const filterType = filterTypeSelect.value;
+            const outputDir = outputDirInput.value.trim();
+            const noPoi = noPoiCheckbox.checked;
+            const skipExisting = skipExistingCheckbox.checked;
+            const idFilename = idFilenameCheckbox.checked;
+            const addDate = addDateCheckbox.checked;
+            const maxTitleLength = parseInt(maxTitleLengthInput.value);
+            const maxDescLength = parseInt(maxDescLengthInput.value);
+            const downloadImages = downloadImagesCheckbox.checked;
+            const chunkSize = parseInt(chunkSizeInput.value);
+            const chunkStart = parseInt(chunkStartInput.value);
+            
+            // Validate inputs
+            if (!anonymous && (!email || !password)) {
+                alert('Please enter your email and password');
+                return;
+            }
+            
+            if (tourSelection === 'all' && anonymous) {
+                alert('Anonymous mode only supports single tour export');
+                return;
+            }
+            
+            if (tourSelection !== 'all' && !tourSelection) {
+                alert('Please enter a tour ID');
+                return;
+            }
+            
+            // Prepare request data
+            const data = {
+                anonymous,
+                email,
+                password,
+                tourSelection,
+                filterType,
+                outputDir,
+                noPoi,
+                skipExisting,
+                idFilename,
+                addDate,
+                maxTitleLength,
+                maxDescLength,
+                downloadImages,
+                chunkSize,
+                chunkStart
+            };
+            
+            // Start the export process
+            startProcessing(data);
+        });
+        
+        // Start processing function
+        async function startProcessing(data) {
+            try {
+                // Reset and show status section
+                statusSection.classList.remove('hidden');
+                statusText.textContent = 'Starting...';
+                statusPercent.textContent = '0%';
+                statusBar.style.width = '0%';
+                statusCompleted.textContent = '0';
+                statusTotal.textContent = '0';
+                logContent.innerHTML = '';
+                floatingProgress.classList.remove('hidden');
+                
+                // Disable buttons during processing
+                startExportBtn.disabled = true;
+                countToursBtn.disabled = true;
+                
+                // Start the processing
                 const response = await fetch('/api/start', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        email: email,
-                        password: password,
-                        anonymous: anonymousMode,
-                        tourSelection: tourId,
-                        filterType: filterType,
-                        noPoi: !includePoi,
-                        outputDir: 'static/exports/gpx',
-                        skipExisting: skipExisting,
-                        idFilename: idFilename,
-                        addDate: addDate,
-                        maxTitleLength: maxTitleLength,
-                        maxDescLength: maxDescLength,
-                        downloadImages: downloadImages,
-                        chunkSize: chunkSize
-                    }),
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
                 });
                 
                 if (!response.ok) {
@@ -1011,293 +927,548 @@
                 }
                 
                 // Start polling for status updates
-                addLog('Processing started on server. Polling for status...');
-                pollProcessingStatus();
+                if (statusIntervalId) {
+                    clearInterval(statusIntervalId);
+                }
                 
-            } catch (err) {
-                console.error("Error during processing:", err);
-                addLog(`Error: ${err.message}`);
-                stopProcessing();
-                showNotification("Failed to start processing", "error");
+                statusIntervalId = setInterval(checkStatus, 1000);
+                
+            } catch (error) {
+                alert('Error starting export: ' + error.message);
+                startExportBtn.disabled = false;
+                countToursBtn.disabled = false;
+                floatingProgress.classList.add('hidden');
             }
         }
         
-        // Poll for processing status
-        async function pollProcessingStatus() {
-            // Check if we're still processing before continuing
-            if (!state.processing) {
-                console.log("Polling stopped because processing is no longer active");
+        // Check status function
+        async function checkStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const status = await response.json();
+                
+                // Update status display
+                statusText.textContent = status.status.charAt(0).toUpperCase() + status.status.slice(1);
+                const percent = Math.round(status.progress * 100);
+                statusPercent.textContent = `${percent}%`;
+                statusBar.style.width = `${percent}%`;
+                statusCompleted.textContent = status.tours_completed;
+                statusTotal.textContent = status.tours_found;
+                
+                // Update floating status
+                floatingStatusText.textContent = status.status.charAt(0).toUpperCase() + status.status.slice(1);
+                floatingStatusPercent.textContent = `${percent}%`;
+                floatingStatusBar.style.width = `${percent}%`;
+                floatingStatusCompleted.textContent = status.tours_completed;
+                floatingStatusTotal.textContent = status.tours_found;
+                
+                // Update log
+                updateLog(status.log, logContent);
+                
+                // Check if processing is complete or has an error
+                if (status.status === 'completed' || status.status === 'error' || status.status === 'chunk_completed') {
+                    clearInterval(statusIntervalId);
+                    statusIntervalId = null;
+                    startExportBtn.disabled = false;
+                    countToursBtn.disabled = false;
+                    floatingProgress.classList.add('hidden');
+                    
+                    // If completed or chunk completed, fetch and display results
+                    if (status.status === 'completed' || status.status === 'chunk_completed') {
+                        fetchAndDisplayResults();
+                    }
+                    
+                    // If chunk completed, update chunk start for next chunk
+                    if (status.status === 'chunk_completed') {
+                        chunkStartInput.value = status.next_chunk;
+                    }
+                }
+                
+            } catch (error) {
+                console.error('Error checking status:', error);
+            }
+        }
+        
+        // Fetch and display results
+        async function fetchAndDisplayResults() {
+            try {
+                const response = await fetch('/api/results');
+                
+                if (!response.ok) {
+                    return;
+                }
+                
+                const results = await response.json();
+                
+                if (!results || results.length === 0) {
+                    return;
+                }
+                
+                // Clear previous results
+                resultsTableBody.innerHTML = '';
+                
+                // Add each result to the table
+                results.forEach(result => {
+                    const row = document.createElement('tr');
+                    
+                    // Add tour ID
+                    const idCell = document.createElement('td');
+                    idCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200';
+                    idCell.innerHTML = `<div class="text-sm leading-5 text-gray-900">${result.id}</div>`;
+                    row.appendChild(idCell);
+                    
+                    // Add tour name
+                    const nameCell = document.createElement('td');
+                    nameCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200';
+                    nameCell.innerHTML = `
+                        <div class="text-sm leading-5 text-gray-900">
+                            <a href="${result.url}" target="_blank" class="text-blue-500 hover:underline truncate max-w-xs block">
+                                ${result.name}
+                            </a>
+                        </div>
+                    `;
+                    row.appendChild(nameCell);
+                    
+                    // Add date
+                    const dateCell = document.createElement('td');
+                    dateCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200';
+                    dateCell.innerHTML = `<div class="text-sm leading-5 text-gray-900">${result.date || '-'}</div>`;
+                    row.appendChild(dateCell);
+                    
+                    // Add type
+                    const typeCell = document.createElement('td');
+                    typeCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200';
+                    typeCell.innerHTML = `<div class="text-sm leading-5 text-gray-900">${result.sport || '-'}</div>`;
+                    row.appendChild(typeCell);
+                    
+                    // Add distance
+                    const distanceCell = document.createElement('td');
+                    distanceCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200';
+                    distanceCell.innerHTML = `<div class="text-sm leading-5 text-gray-900">${result.distance_km ? result.distance_km.toFixed(1) + ' km' : '-'}</div>`;
+                    row.appendChild(distanceCell);
+                    
+                    // Add duration
+                    const durationCell = document.createElement('td');
+                    durationCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200';
+                    durationCell.innerHTML = `<div class="text-sm leading-5 text-gray-900">${result.duration ? result.duration.toFixed(1) + ' h' : '-'}</div>`;
+                    row.appendChild(durationCell);
+                    
+                    // Add elevation up - now showing as whole numbers
+                    const upCell = document.createElement('td');
+                    upCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200';
+                    upCell.innerHTML = `<div class="text-sm leading-5 text-gray-900">${result.elevation_up ? Math.round(result.elevation_up) + ' m' : '-'}</div>`;
+                    row.appendChild(upCell);
+                    
+                    // Add elevation down - now showing as whole numbers
+                    const downCell = document.createElement('td');
+                    downCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200';
+                    downCell.innerHTML = `<div class="text-sm leading-5 text-gray-900">${result.elevation_down ? Math.round(result.elevation_down) + ' m' : '-'}</div>`;
+                    row.appendChild(downCell);
+                    
+                    // Add actions
+                    const actionsCell = document.createElement('td');
+                    actionsCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200';
+                    
+                    // Create actions content
+                    let actionsContent = `
+                        <div class="flex space-x-2">
+                            <a href="/api/download/${result.id}" class="text-blue-500 hover:text-blue-700">Download</a>
+                    `;
+                    
+                    // Add images download if available
+                    if (result.images && result.images.length > 0) {
+                        actionsContent += `
+                            <a href="/api/export/images/${result.id}" class="text-blue-500 hover:text-blue-700">
+                                Images (${result.images.length})
+                            </a>
+                        `;
+                    }
+                    
+                    // Add open folder action if in pywebview
+                    if (isPywebview && result.output_dir) {
+                        actionsContent += `
+                            <a href="#" class="text-blue-500 hover:text-blue-700 open-folder" data-path="${result.output_dir}">
+                                Open Folder
+                            </a>
+                        `;
+                    }
+                    
+                    actionsContent += `</div>`;
+                    actionsCell.innerHTML = actionsContent;
+                    row.appendChild(actionsCell);
+                    
+                    // Add row to table
+                    resultsTableBody.appendChild(row);
+                });
+                
+                // Add event listeners for open folder links
+                if (isPywebview) {
+                    document.querySelectorAll('.open-folder').forEach(link => {
+                        link.addEventListener('click', (e) => {
+                            e.preventDefault();
+                            const path = e.target.getAttribute('data-path');
+                            if (path) {
+                                // Use pywebview API to open the folder
+                                window.pywebview.api.open_folder(path);
+                            }
+                        });
+                    });
+                }
+                
+                // Show results section
+                resultsSection.classList.remove('hidden');
+                exportClearBtn.classList.remove('hidden');
+                
+            } catch (error) {
+                console.error('Error fetching results:', error);
+            }
+        }
+        
+        // Collections functions
+        
+        // Scrape public collections
+        scrapePublicBtn.addEventListener('click', () => {
+            const urls = collectionUrlsInput.value.trim().split('\n').filter(url => url.trim());
+            
+            if (urls.length === 0) {
+                alert('Please enter at least one collection URL');
                 return;
             }
             
+            startCollectionsScraping('/api/collections/public', { urls });
+        });
+        
+        // Clear collections
+        clearCollectionsBtn.addEventListener('click', async () => {
             try {
-                const response = await fetch('/api/status');
-                
-                if (!response.ok) {
-                    throw new Error('Failed to fetch status');
-                }
-                
-                const data = await response.json();
-                
-                // Update progress in UI
-                updateProcessingProgress(
-                    data.progress, 
-                    data.tours_completed, 
-                    data.tours_found
-                );
-                
-                // Update status state
-                document.getElementById('statusState').textContent = data.status.charAt(0).toUpperCase() + data.status.slice(1);
-                
-                // Add log entries if any new ones
-                if (data.log && Array.isArray(data.log)) {
-                    data.log.forEach(entry => {
-                        addLog(entry);
-                    });
-                }
-                
-                // Check if processing is complete
-                if (data.status === 'completed') {
-                    addLog('Processing completed successfully');
-                    
-                    // Fetch the results
-                    const resultsResponse = await fetch('/api/results');
-                    
-                    if (!resultsResponse.ok) {
-                        throw new Error('Failed to fetch results');
-                    }
-                    
-                    const tours = await resultsResponse.json();
-                    
-                    // Stop polling before processing tours
-                    stopProcessing();
-                    
-                    // Process the results
-                    processResults(tours);
-                    return;
-                } else if (data.status === 'error') {
-                    addLog(`Error: ${data.error || 'Unknown error occurred'}`);
-                    stopProcessing();
-                    showNotification('Processing failed: ' + (data.error || 'Unknown error'), 'error');
-                    return;
-                }
-                
-                // Continue polling
-                setTimeout(() => pollProcessingStatus(), 1000);
-                
+                await fetch('/api/clear-collections', { method: 'POST' });
+                collectionsResultsSection.classList.add('hidden');
+                downloadCollectionsSection.classList.add('hidden');
+                collectionsTableBody.innerHTML = '';
+                selectedCollections = [];
             } catch (error) {
-                console.error('Error polling status:', error);
-                addLog(`Error checking status: ${error.message}`);
-                
-                // Only retry if we're still in processing mode
-                if (state.processing) {
-                    setTimeout(() => pollProcessingStatus(), 2000);
+                console.error('Error clearing collections:', error);
+            }
+        });
+        
+        // Download collection tours
+        downloadCollectionToursBtn.addEventListener('click', async () => {
+            if (selectedCollections.length === 0) {
+                alert('Please select at least one collection');
+                return;
+            }
+            
+            const outputDir = collectionsOutputDirInput.value.trim();
+            const includeMetadata = collectionsIncludeMetadataCheckbox.checked;
+            const downloadImages = collectionsDownloadImagesCheckbox.checked;
+            
+            // GPX options
+            const gpxOptions = {
+                noPoi: collectionsNoPoiCheckbox.checked,
+                skipExisting: collectionsSkipExistingCheckbox.checked,
+                addDate: collectionsAddDateCheckbox.checked,
+                maxTitleLength: -1,
+                maxDescLength: -1
+            };
+            
+            // Determine common user ID from collections if possible
+            let userId = null;
+            // First, try to get user ID from creator field
+            for (const collection of selectedCollections) {
+                if (collection.creator && collection.creator.id) {
+                    userId = collection.creator.id;
+                    break;
                 }
             }
-        }
-        
-        // Clear all processed data
-        async function clearData() {
-            if (!confirm('Are you sure you want to clear all processed tours?')) return;
             
+            // If no user ID found from creator, try to extract from URL
+            if (!userId) {
+                for (const collection of selectedCollections) {
+                    if (collection.url) {
+                        const match = collection.url.match(/\/user\/([^\/]+)/);
+                        if (match && match[1]) {
+                            userId = match[1];
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            const data = {
+                collections: selectedCollections,
+                outputDir,
+                includeMetadata,
+                downloadImages,
+                gpxOptions,
+                userId: userId  // Add user ID to the request
+            };
+            
+            startCollectionTourDownload(data);
+        });
+        
+        // Start collections scraping
+        async function startCollectionsScraping(endpoint, data) {
             try {
-                const response = await fetch('/api/clear');
+                // Reset and show status section
+                collectionsStatusSection.classList.remove('hidden');
+                collectionsStatusText.textContent = 'Starting...';
+                collectionsStatusPercent.textContent = '0%';
+                collectionsStatusBar.style.width = '0%';
+                collectionsStatusCompleted.textContent = '0';
+                collectionsStatusTotal.textContent = '0';
+                collectionsLogContent.innerHTML = '';
+                floatingProgress.classList.remove('hidden');
+                
+                // Disable buttons during processing
+                scrapePublicBtn.disabled = true;
+                
+                // Start the scraping
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
                 
                 if (!response.ok) {
                     const errorData = await response.json();
-                    throw new Error(errorData.error || 'Failed to clear data');
+                    throw new Error(errorData.error || 'Failed to start scraping');
                 }
                 
-                // Clear tours from state
-                state.tours = [];
-                state.filteredTours = [];
+                // Start polling for status updates
+                if (collectionsStatusIntervalId) {
+                    clearInterval(collectionsStatusIntervalId);
+                }
                 
-                // Update the UI
-                updateDataTable();
-                
-                // Hide tour details
-                document.getElementById('tourDetails').classList.add('hidden');
-                
-                showNotification('Data cleared successfully', 'success');
+                collectionsStatusIntervalId = setInterval(checkCollectionsStatus, 1000);
                 
             } catch (error) {
-                console.error('Error clearing data:', error);
-                showNotification(error.message, 'error');
+                alert('Error starting scraping: ' + error.message);
+                scrapePublicBtn.disabled = false;
+                floatingProgress.classList.add('hidden');
             }
         }
         
-        // Initialize the application
-        document.addEventListener('DOMContentLoaded', function() {
-            // Add event listeners
-            document.getElementById('helpBtn').addEventListener('click', function() {
-                document.getElementById('helpModal').classList.remove('hidden');
-            });
-            
-            document.getElementById('closeHelpBtn').addEventListener('click', function() {
-                document.getElementById('helpModal').classList.add('hidden');
-            });
-            
-            // Close help modal when clicking outside
-            document.getElementById('helpModal').addEventListener('click', function(e) {
-                if (e.target === this) {
-                    this.classList.add('hidden');
-                }
-            });
-            
-            // Anonymous mode toggle
-            document.getElementById('anonymousMode').addEventListener('change', function() {
-                const loginFields = document.getElementById('loginFields');
-                const tourSelection = document.querySelectorAll('input[name="tourSelection"]');
+        // Check collections status
+        async function checkCollectionsStatus() {
+            try {
+                const response = await fetch('/api/collections-status');
+                const status = await response.json();
                 
-                if (this.checked) {
-                    loginFields.classList.add('hidden');
+                // Update status display
+                collectionsStatusText.textContent = status.status.charAt(0).toUpperCase() + status.status.slice(1);
+                const percent = Math.round(status.progress * 100);
+                collectionsStatusPercent.textContent = `${percent}%`;
+                collectionsStatusBar.style.width = `${percent}%`;
+                collectionsStatusCompleted.textContent = status.collections_completed;
+                collectionsStatusTotal.textContent = status.collections_found;
+                
+                // Update floating status
+                floatingStatusText.textContent = status.status.charAt(0).toUpperCase() + status.status.slice(1);
+                floatingStatusPercent.textContent = `${percent}%`;
+                floatingStatusBar.style.width = `${percent}%`;
+                floatingStatusCompleted.textContent = status.collections_completed;
+                floatingStatusTotal.textContent = status.collections_found;
+                
+                // Update log
+                updateLog(status.log, collectionsLogContent);
+                
+                // Check if processing is complete or has an error
+                if (status.status === 'completed' || status.status === 'error') {
+                    clearInterval(collectionsStatusIntervalId);
+                    collectionsStatusIntervalId = null;
+                    scrapePublicBtn.disabled = false;
+                    floatingProgress.classList.add('hidden');
                     
-                    // Force specific tour selection for anonymous mode
-                    tourSelection.forEach(radio => {
-                        radio.disabled = radio.value !== 'specific';
-                        if (radio.value === 'specific') radio.checked = true;
-                    });
-                    
-                    // Show the tour ID field
-                    document.getElementById('tourIdField').classList.remove('hidden');
-                    document.getElementById('allToursFields').classList.add('hidden');
-                } else {
-                    loginFields.classList.remove('hidden');
-                    
-                    // Enable all tour selection options
-                    tourSelection.forEach(radio => {
-                        radio.disabled = false;
-                    });
-                }
-            });
-            
-            // Tour selection change
-            document.querySelectorAll('input[name="tourSelection"]').forEach(radio => {
-                radio.addEventListener('change', function() {
-                    const tourIdField = document.getElementById('tourIdField');
-                    const allToursFields = document.getElementById('allToursFields');
-                    
-                    if (this.value === 'specific') {
-                        tourIdField.classList.remove('hidden');
-                        allToursFields.classList.add('hidden');
-                    } else if (this.value === 'all') {
-                        tourIdField.classList.add('hidden');
-                        allToursFields.classList.remove('hidden');
+                    // If completed, fetch and display results
+                    if (status.status === 'completed') {
+                        fetchAndDisplayCollections();
                     }
+                }
+                
+            } catch (error) {
+                console.error('Error checking collections status:', error);
+            }
+        }
+        
+        // Fetch and display collections
+        async function fetchAndDisplayCollections() {
+            try {
+                const response = await fetch('/api/collections-results');
+                
+                if (!response.ok) {
+                    return;
+                }
+                
+                const collections = await response.json();
+                
+                if (!collections || collections.length === 0) {
+                    return;
+                }
+                
+                // Clear previous results and selection
+                collectionsTableBody.innerHTML = '';
+                selectedCollections = [];
+                
+                // Add each collection to the table
+                collections.forEach(collection => {
+                    const row = document.createElement('tr');
+                    
+                    // Add collection selection checkbox
+                    const selectCell = document.createElement('td');
+                    selectCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200';
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.className = 'form-checkbox h-5 w-5 text-blue-600';
+                    checkbox.dataset.collectionId = collection.id;
+                    checkbox.addEventListener('change', () => {
+                        if (checkbox.checked) {
+                            selectedCollections.push(collection);
+                        } else {
+                            selectedCollections = selectedCollections.filter(c => c.id !== collection.id);
+                        }
+                        
+                        // Show/hide download section based on selection
+                        if (selectedCollections.length > 0) {
+                            downloadCollectionsSection.classList.remove('hidden');
+                        } else {
+                            downloadCollectionsSection.classList.add('hidden');
+                        }
+                    });
+                    selectCell.appendChild(checkbox);
+                    row.appendChild(selectCell);
+                    
+                    // Add collection name
+                    const nameCell = document.createElement('td');
+                    nameCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200';
+                    nameCell.innerHTML = `
+                        <div class="text-sm leading-5 text-gray-900">
+                            <a href="${collection.url}" target="_blank" class="text-blue-500 hover:underline truncate max-w-xs block">
+                                View Collection
+                            </a>
+                        </div>
+                    `;
+                    row.appendChild(nameCell);
+                    
+                    // Add collection ID
+                    const idCell = document.createElement('td');
+                    idCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200';
+                    idCell.innerHTML = `<div class="text-sm leading-5 text-gray-900">${collection.id || '-'}</div>`;
+                    row.appendChild(idCell);
+                    
+                    // Extract and add slug
+                    const slug = extractSlug(collection.url, collection.name);
+                    const slugCell = document.createElement('td');
+                    slugCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200';
+                    slugCell.innerHTML = `<div class="text-sm leading-5 text-gray-900">${slug || '-'}</div>`;
+                    row.appendChild(slugCell);
+                    
+                    // Add tours count
+                    const toursCell = document.createElement('td');
+                    toursCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200';
+                    toursCell.innerHTML = `<div class="text-sm leading-5 text-gray-900">${collection.tours ? collection.tours.length : 0}</div>`;
+                    row.appendChild(toursCell);
+                    
+                    // Add row to table
+                    collectionsTableBody.appendChild(row);
                 });
-            });
-            
-            // Check total tours button
-            document.getElementById('checkToursBtn').addEventListener('click', checkTotalTours);
-            
-            // Advanced options toggle
-            document.getElementById('toggleAdvancedBtn').addEventListener('click', function() {
-                const advancedOptions = document.getElementById('advancedOptions');
-                const caret = document.getElementById('advancedCaret');
                 
-                advancedOptions.classList.toggle('hidden');
+                // Show results section
+                collectionsResultsSection.classList.remove('hidden');
                 
-                if (advancedOptions.classList.contains('hidden')) {
-                    caret.classList.replace('fa-caret-down', 'fa-caret-right');
-                } else {
-                    caret.classList.replace('fa-caret-right', 'fa-caret-down');
+            } catch (error) {
+                console.error('Error fetching collections:', error);
+            }
+        }
+        
+        // Start downloading collection tours
+        async function startCollectionTourDownload(data) {
+            try {
+                // Reset and show status section
+                statusSection.classList.remove('hidden');
+                statusText.textContent = 'Starting...';
+                statusPercent.textContent = '0%';
+                statusBar.style.width = '0%';
+                statusCompleted.textContent = '0';
+                statusTotal.textContent = '0';
+                logContent.innerHTML = '';
+                floatingProgress.classList.remove('hidden');
+                
+                // Disable buttons during processing
+                downloadCollectionToursBtn.disabled = true;
+                
+                // Start the download
+                const response = await fetch('/api/download-collection-tours', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Failed to start download');
+                }
+                
+                // Start polling for status updates
+                if (statusIntervalId) {
+                    clearInterval(statusIntervalId);
+                }
+                
+                statusIntervalId = setInterval(checkStatus, 1000);
+                
+            } catch (error) {
+                alert('Error starting download: ' + error.message);
+                downloadCollectionToursBtn.disabled = false;
+                floatingProgress.classList.add('hidden');
+            }
+        }
+        
+        // Update log helper function
+        function updateLog(log, container) {
+            if (!log || !log.length) return;
+            
+            // Create content
+            const content = log.join('<br>');
+            
+            // Update container
+            container.innerHTML = content;
+            
+            // Scroll to bottom
+            container.parentElement.scrollTop = container.parentElement.scrollHeight;
+        }
+        
+        // Initialize some elements
+        document.addEventListener('DOMContentLoaded', () => {
+            // Add listeners for buttons that need to be visible/hidden dynamically
+            
+            // When selecting tour by ID, hide the filter section
+            singleTourRadio.addEventListener('change', () => {
+                if (singleTourRadio.checked) {
+                    filterSection.classList.add('hidden');
+                    tourIdInput.classList.remove('hidden');
                 }
             });
             
-            // Tab navigation
-            document.getElementById('configTabBtn').addEventListener('click', () => showTab('configTab'));
-            document.getElementById('dataTabBtn').addEventListener('click', () => showTab('dataTab'));
-            
-            // Processing buttons
-            document.getElementById('startProcessingBtn').addEventListener('click', () => startProcessing());
-            document.getElementById('cancelProcessingBtn').addEventListener('click', function() {
-                if (confirm('Are you sure you want to cancel processing?')) {
-                    stopProcessing();
-                    addLog('Processing cancelled by user');
-                    showNotification('Processing cancelled', 'info');
+            // Toggle filter section visibility based on tour selection
+            allToursRadio.addEventListener('change', () => {
+                if (allToursRadio.checked) {
+                    filterSection.classList.remove('hidden');
+                    tourIdInput.classList.add('hidden');
                 }
             });
             
-            document.getElementById('viewResultsBtn').addEventListener('click', function() {
-                showTab('dataTab');
-            });
+            // Initialize based on default selection
+            if (singleTourRadio.checked) {
+                tourIdInput.classList.remove('hidden');
+                filterSection.classList.add('hidden');
+            }
             
-            // Data tab filtering and sorting
-            document.getElementById('dataSearchInput').addEventListener('input', function() {
-                filterAndSortData();
-            });
+            // Update folder inputs on page load
+            updateSelectedFolder();
             
-            document.getElementById('dataSortField').addEventListener('change', function() {
-                state.sortField = this.value;
-                filterAndSortData();
-            });
-            
-            document.getElementById('dataSortDirection').addEventListener('click', function() {
-                const icon = this.querySelector('i');
-                
-                if (icon.classList.contains('fa-sort-up')) {
-                    icon.classList.replace('fa-sort-up', 'fa-sort-down');
-                    state.sortDirection = 'desc';
-                } else {
-                    icon.classList.replace('fa-sort-down', 'fa-sort-up');
-                    state.sortDirection = 'asc';
-                }
-                
-                filterAndSortData();
-            });
-            
-            // Download all button
-            document.getElementById('downloadAllBtn').addEventListener('click', function() {
-                if (state.tours.length === 0) {
-                    showNotification('No tours available to download', 'error');
-                    return;
-                }
-                
-                window.location.href = '/api/export/all';
-            });
-            
-            // Clear data button
-            document.getElementById('clearDataBtn').addEventListener('click', clearData);
-            
-            // Set default sort field
-            state.sortField = 'name';
-            state.sortDirection = 'asc';
-            
-            // Import Tour IDs
-            document.getElementById('showImportBtn').addEventListener('click', function() {
-                const importSection = document.getElementById('importTourSection');
-                importSection.classList.toggle('hidden');
-            });
-            
-            document.getElementById('importToursBtn').addEventListener('click', function() {
-                const textarea = document.getElementById('tourIdsImport');
-                const text = textarea.value.trim();
-                
-                if (!text) {
-                    showNotification('Please enter tour IDs to import', 'error');
-                    return;
-                }
-                
-                // Split by newlines or commas
-                const tourIds = text.split(/[\n,]+/).map(id => id.trim()).filter(id => id);
-                
-                if (tourIds.length === 0) {
-                    showNotification('No valid tour IDs found', 'error');
-                    return;
-                }
-                
-                // For now, just take the first one
-                document.getElementById('tourIdInput').value = tourIds[0];
-                
-                // Select "Specific Tour ID" option
-                document.querySelector('input[name="tourSelection"][value="specific"]').checked = true;
-                document.getElementById('tourIdField').classList.remove('hidden');
-                document.getElementById('allToursFields').classList.add('hidden');
-                
-                showNotification(`Imported ${tourIds.length} tour ID(s)`, 'success');
-                
-                // Hide the import section
-                document.getElementById('importTourSection').classList.add('hidden');
+            // Set up folder selection buttons to work with pywebview
+            document.querySelectorAll('.folder-selection-btn').forEach(btn => {
+                // Show browse buttons only in desktop mode
+                btn.style.display = isPywebview ? 'inline-block' : 'none';
             });
         });
     </script>
