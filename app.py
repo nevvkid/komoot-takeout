@@ -425,11 +425,157 @@ class CollectionManager:
                     collection['tours'] = deduplicated_tours
                     collection['tours_count'] = len(deduplicated_tours)
             
+            # Generate Jekyll _config.yml file from collections
+            self.generate_jekyll_config(collections)
+            
             logger.info(f"Saved collection data to {self.output_dir}")
             return True
             
         except Exception as e:
             logger.error(f"Error saving collections data: {str(e)}")
+            return False
+    
+    def generate_jekyll_config(self, collections):
+        """Generate Jekyll _config.yml file from collections data."""
+        try:
+            # Check if we have collections to process
+            if not collections:
+                logger.warning("No collections available to generate Jekyll config")
+                return False
+                
+            # Create the output directory if it doesn't exist
+            os.makedirs(self.output_dir, exist_ok=True)
+            
+            # Path to the template _config.yml
+            template_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'templates', '_config.yml')
+            
+            # Check if template exists
+            config_content = ""
+            if os.path.exists(template_path):
+                # Read the template file
+                with open(template_path, 'r', encoding='utf-8') as f:
+                    config_content = f.read()
+            else:
+                # Create a basic template if none exists
+                config_content = """# Site settings
+title:          komoot-local
+description:    "Your local komoot"
+baseurl:        ""
+url:            "https://example.com"
+
+# Author
+author:
+  name:         "Komoot User"
+  email:        "user@example.com"
+
+# Build settings
+markdown:       kramdown
+include:
+  - _pages
+
+# Assets
+sass:
+  sass_dir:     _sass
+  style:        compressed
+
+# Gems
+plugins:
+  - jekyll-feed
+  - jekyll-leaflet
+  - jekyll-gpx-converter
+  - jekyll-paginate
+
+# Permalinks
+permalink:      /:year-:month-:day/:title
+paginate:       5
+
+# GPX Collections with metadata for display on homepage
+collections:
+"""
+            
+            # Find or create collections section
+            collections_section_index = config_content.find("collections:")
+            if collections_section_index == -1:
+                # If collections section doesn't exist, add it
+                config_content += "\n# GPX Collections with metadata for display on homepage\ncollections:\n"
+                collections_section_index = config_content.find("collections:")
+            
+            # Get everything up to collections section
+            config_prefix = config_content[:collections_section_index + len("collections:")]
+            
+            # Find defaults section
+            defaults_section_index = config_content.find("defaults:")
+            
+            # Create new collections configuration
+            new_collections_config = "\n"
+            display_order = 1
+            collection_slugs = []
+            
+            # Add each collection
+            for collection in collections:
+                # Skip collections without tours
+                if not collection.get('tours'):
+                    continue
+                    
+                # Generate a safe collection slug (no spaces, only lowercase alphanumeric and underscores)
+                collection_name = collection.get('name', f"Collection_{collection.get('id', '')}")
+                collection_slug = re.sub(r'[^a-z0-9_]', '_', collection_name.lower().strip())
+                collection_slug = re.sub(r'_+', '_', collection_slug)  # Normalize multiple underscores
+                
+                # Make sure slug is unique
+                base_slug = collection_slug
+                counter = 1
+                while collection_slug in collection_slugs:
+                    collection_slug = f"{base_slug}_{counter}"
+                    counter += 1
+                
+                collection_slugs.append(collection_slug)
+                
+                # Add collection to config
+                new_collections_config += f"  {collection_slug}:\n"
+                new_collections_config += f"    output: true\n"
+                new_collections_config += f"    permalink: /{collection_slug}/:title/\n"
+                new_collections_config += f"    title: \"{collection_name}\"\n"
+                new_collections_config += f"    description: \"{collection.get('description', 'Komoot collection')}\"\n"
+                new_collections_config += f"    display_order: {display_order}\n"
+                
+                display_order += 1
+            
+            # Create new defaults section for collections
+            new_defaults_config = "\n# Add these defaults to help with GPX file handling\ndefaults:\n"
+            for collection_slug in collection_slugs:
+                new_defaults_config += f"  - scope:\n"
+                new_defaults_config += f"      path: \"_{collection_slug}\"\n"
+                new_defaults_config += f"      type: \"{collection_slug}\"\n"
+                new_defaults_config += f"    values:\n"
+                new_defaults_config += f"      layout: \"gpx\"\n"
+            
+            # Add default for pages
+            new_defaults_config += f"  # Default for collection pages\n"
+            new_defaults_config += f"  - scope:\n"
+            new_defaults_config += f"      path: \"\"\n"
+            new_defaults_config += f"      type: \"pages\"\n"
+            new_defaults_config += f"    values:\n"
+            new_defaults_config += f"      layout: \"default\"\n"
+            
+            # Combine all sections
+            if defaults_section_index != -1:
+                # Use content up to defaults section, then add our new sections
+                config_content = config_prefix + new_collections_config + new_defaults_config
+            else:
+                # No defaults section, just append our new content
+                config_content = config_prefix + new_collections_config + new_defaults_config
+            
+            # Write the new config file
+            config_path = os.path.join(self.output_dir, '_config.yml')
+            with open(config_path, 'w', encoding='utf-8') as f:
+                f.write(config_content)
+            
+            logger.info(f"Generated Jekyll _config.yml with {len(collection_slugs)} collections at {config_path}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error generating Jekyll config: {str(e)}")
             return False
     
     def get_collections_zip(self):

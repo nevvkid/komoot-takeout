@@ -1,0 +1,100 @@
+# Site settings
+title:          komoot-local
+description:    "Your local komoot"
+baseurl:        ""
+url:            "https://nevvkid.github.io"
+
+# Google Analytics
+google_analytics: UA--XXXXXXXX-X
+
+# Author
+author:
+  name:         Johannes Elias Lohbihler
+  url:          https://lohbihler.com
+  email:        mika@hey.com
+
+# Build settings
+markdown:       kramdown
+include:
+  - _pages
+
+# Assets
+sass:
+  sass_dir:     _sass
+  style:        compressed
+
+# Gems
+plugins:
+  - jekyll-feed
+  - jekyll-leaflet
+  - jekyll-gpx-converter
+  - jekyll-paginate
+  # Disabled for faster development builds 
+  # - jekyll-seo-tag
+  # - jemoji #Uncomment this to allow emoji in your post
+
+# Permalinks
+permalink:      /:year-:month-:day/:title
+paginate:       5
+
+# Excludes
+exclude: [ Gemfile, Gemfile.lock, tale.gemspec ]
+
+# Disqus (Set to your disqus id)
+disqus:         jekyll-tale
+
+# GPX Collections with metadata for display on homepage
+collections:
+  ride4rookies:
+    output: true
+    permalink: /ride4rookies/:title/
+    title: "Ride4Rookies"
+    description: "Easy cycling routes for beginners"
+    display_order: 1
+  bergfest:
+    output: true
+    permalink: /bergfest/:title/
+    title: "Bergfest"
+    description: "Challenging routes with hills and mountains"
+    display_order: 2
+  montanasvacias:
+    output: true
+    permalink: /montanasvacias/:title/
+    title: "Montañas Vacías"
+    description: "Routes through empty mountains"
+    display_order: 3
+  georgia-2024:
+    output: true
+    permalink: /georgia-2024/:title/
+    title: "Goergia 2024"
+    description: "Bikepacking caucasus mountains" 
+    display_order: 4
+
+# Add these defaults to help with GPX file handling
+defaults:
+  - scope:
+      path: "_ride4rookies"
+      type: "ride4rookies"
+    values:
+      layout: "gpx"
+  - scope:
+      path: "_bergfest"
+      type: "bergfest"
+    values:
+      layout: "gpx"
+  - scope:
+      path: "_montanasvacias"
+      type: "montanasvacias"
+    values:
+      layout: "gpx"    
+  - scope:
+      path: "_georgia-2024"
+      type: "georgia-2024"
+    values:
+      layout: "gpx"    
+  # Default for collection pages
+  - scope:
+      path: ""
+      type: "pages"
+    values:
+      layout: "default"
