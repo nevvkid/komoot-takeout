@@ -1,6 +1,8 @@
 # 🧭 komoot-takeout
 **Get your tours. They're yours.**
 
+---
+
 **A simple desktop app to download your Tours & Collections from komoot.**
 
 Additionally to the features of **komootGPX**  with **komoot-takout** you can backup all your precious **Collections** from **komoot**.  
