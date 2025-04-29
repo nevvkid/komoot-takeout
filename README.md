@@ -10,8 +10,10 @@ Built with Flask, PyWebView, and bundled into a native app using PyInstaller.
 
 ## 🖥 Supported Platforms
 
-- ✅ Windows (.exe) download here: [komoot-takeout.exe ](https://github.com/nevvkid/komoot-takeout/raw/1fb58e052c5b06e9c6c1fac2a3e370ed183ce96e/dist/komoot-takeout.exe)
-- ✅ macOS (.app) download here: [komoot-takeout.app(macOS).zip]()
+Only tested with Windows 11 Pro & macOS 15.x.x (Apple silicon)
+
+- ✅ **Windows (.exe) download here:** [komoot-takeout.exe ](https://github.com/nevvkid/komoot-takeout/raw/1fb58e052c5b06e9c6c1fac2a3e370ed183ce96e/dist/komoot-takeout.exe)
+- ✅ **macOS (.app) download here:** [komoot-takeout.app(macOS).zip](https://github.com/nevvkid/komoot-takeout/raw/b33521fb8c5da4472e847c451b918125ac5d8a2b/dist/komoot-takeout.app(macOS).zip)
 
 ---
 
