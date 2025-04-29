@@ -102,14 +102,47 @@ See [LICENSE](LICENSE) for more information.
 
 ## 🛠 Setup Instructions
 
+### 0. Install Python (Windows)
+
+#### 1. Check if Python is installed
+Open a new terminal and try:
+
+```
+python --version
+```
+
+```
+python3 --version
+```
+
+If both fail, you need to install Python first.
+
+#### 2. Install Python correctly
+Download Python from:
+👉 https://www.python.org/downloads/windows/
+
+Important when installing: ✅ During installation, check the box that says "Add Python to PATH" at the beginning of the installer!
+
+Without this, Windows can't find python in the terminal.
+
+
 ### 1. Create and activate virtual environment
 
 #### Windows
 
 ```
-python -m venv venv  
+python -m venv venv 
+```
+
+If you are using PowerShell on Windows you need to use this...
+```
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
+```
+
+``` 
 venv\Scripts\activate
 ```
+
 
 #### macOS/Linux
 
