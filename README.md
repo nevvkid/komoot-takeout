@@ -2,6 +2,7 @@
 **Get your tours. They're yours.**
 
 A simple desktop app to download your Tours as GPX tracks from Komoot.  
+Additionally to the features of **komootGPX**  with **komoot-takout** you can backup all your precious Collections from **komoot**.  
 Built with Flask, PyWebView, and bundled into a native app using PyInstaller.
 
 ---
@@ -26,6 +27,16 @@ The application uses:
 - **PyWebView**: To create a native-looking desktop window
 - **Beautiful Soup**: For parsing Komoot web content
 - **PyInstaller**: To package everything into a standalone executable
+
+---
+
+## 🔍 Key Features
+
+- **One-click GPX downloads**: Download GPX files from Komoot with a single click
+- **Batch download**: Download multiple tracks at once
+- **Custom download folder**: Choose where to save your GPX files
+- **Native desktop experience**: Runs as a standalone desktop application
+- **No login required**: Works with publicly shared Komoot routes
 
 ---
 
@@ -143,16 +154,6 @@ Output will be placed in the `/dist/` folder:
 At startup, the app creates a default folder in your home directory called "komoot-takeout". You can select a different folder from within the app interface.
 
 All GPX files downloaded from Komoot will be saved to the selected folder. The application remembers your folder choice between sessions.
-
----
-
-## 🔍 Key Features
-
-- **One-click GPX downloads**: Download GPX files from Komoot with a single click
-- **Batch download**: Download multiple tracks at once
-- **Custom download folder**: Choose where to save your GPX files
-- **Native desktop experience**: Runs as a standalone desktop application
-- **No login required**: Works with publicly shared Komoot routes
 
 ---
 
