@@ -138,7 +138,7 @@ def main():
             os.makedirs(templates_dir, exist_ok=True)
         
         # Create default download directory in user's home folder
-        default_download_dir = os.path.join(str(Path.home()), "KomootExporter")
+        default_download_dir = os.path.join(str(Path.home()), "komoot-takeout")
         os.makedirs(default_download_dir, exist_ok=True)
         set_selected_folder(default_download_dir)
         
@@ -155,7 +155,7 @@ def main():
         
         # Create window with the API exposed
         window = webview.create_window(
-            "Komoot GPX Exporter", 
+            "komoot-takeout", 
             "http://localhost:5001",
             width=1100, 
             height=900,
