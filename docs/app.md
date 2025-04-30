@@ -70,6 +70,32 @@ class CollectionManager:
         # Generate Jekyll site config
 ```
 
+#### Collection Export Features
+
+The `CollectionManager` provides comprehensive data export functionality:
+
+- **JSON Export**: Saves collections to both standard and timestamped JSON files
+- **CSV Export**: Creates detailed CSV files for each collection with tour metadata
+- **Deduplication**: Intelligently removes duplicate tours while preserving the most detailed data
+- **Enhanced Metadata**: Calculates and adds derived fields like climbing intensity
+- **Jekyll Integration**: Generates Jekyll-compatible configuration for static site generation
+
+The class handles complex tasks such as:
+
+1. Organizing collections by user ID
+2. Creating consistent file naming with URL-friendly slugs
+3. Formatting data fields for better human readability
+4. Calculating metric conversions (km to miles)
+5. Selecting relevant fields dynamically based on available data
+
+Example of enhanced field calculation:
+```python
+# Calculate meters climbed per kilometer
+if tour.get('elevation_up') and distance_km:
+    meters_per_km = float(tour['elevation_up']) / float(distance_km)
+    csv_tour["climbing_intensity"] = f"{meters_per_km:.1f}"
+```
+
 ## Two-Step Collection Enhancement
 
 The application implements a two-step approach for collection enhancement:
