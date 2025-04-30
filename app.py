@@ -345,13 +345,7 @@ class CollectionManager:
                 enhanced_collections = collections.copy()
             
             # Save collections to JSON files
-            # Always save to the standard all_collections.json file
-            standard_json_path = os.path.join(self.output_dir, "all_collections.json")
-            with open(standard_json_path, 'w', encoding='utf-8') as f:
-                json.dump(enhanced_collections, f, indent=2, ensure_ascii=False)
-            logger.info(f"Saved collections to {standard_json_path}")
-            
-            # Also save a timestamped version (this is useful for versioning)
+            # Only save the timestamped version (removing redundant all_collections.json file)
             status_suffix = "_enhanced" if enhance_tours else "_basic"
             timestamped_json_path = os.path.join(self.output_dir, f"all_collections_{timestamp}{status_suffix}.json")
             with open(timestamped_json_path, 'w', encoding='utf-8') as f:
@@ -2466,7 +2460,7 @@ def scrape_public_collections_thread(collection_urls):
                                                         # Ensure user ID is preserved
                                                         if 'creator' not in detailed:
                                                             detailed['creator'] = {}
-                                                        if 'id' not in detailed['creator']:
+                                                        if 'id' not in detailed['creator'] or not detailed['creator']['id']:
                                                             detailed['creator']['id'] = page_user_id
                                                         detailed_collections.append(detailed)
                                                     else:
@@ -3064,11 +3058,15 @@ def enhance_saved_collections():
         if not os.path.exists(user_dir):
             return jsonify({'error': f'No saved collections found for user ID: {user_id}'}), 404
             
-        # Path to the saved collections JSON file
-        collections_file = os.path.join(user_dir, 'all_collections.json')
-        if not os.path.exists(collections_file):
-            return jsonify({'error': f'No collections JSON file found in {user_dir}'}), 404
+        # Find the most recent collections file with basic metadata
+        basic_json_files = [f for f in os.listdir(user_dir) if f.startswith('all_collections_') and f.endswith('_basic.json')]
+        
+        if not basic_json_files:
+            return jsonify({'error': f'No basic collections file found in {user_dir}'}), 404
             
+        # Use the most recent basic file
+        collections_file = os.path.join(user_dir, sorted(basic_json_files)[-1])
+        
         logger.info(f"Starting enhancement of saved collections for user ID: {user_id}")
         
         # Reset collections status
@@ -3092,6 +3090,7 @@ def enhance_saved_collections():
     except Exception as e:
         logger.error(f"Error starting collection enhancement: {str(e)}")
         return jsonify({'error': str(e)}), 500
+
 
 def enhance_collections_thread(collections_file, user_id):
     """Background thread to enhance previously saved collections with detailed tour data"""

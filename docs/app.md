@@ -498,3 +498,209 @@ This creates a complete site configuration with:
 - Plugin configuration
 
 The generated site can be used with GitHub Pages or any Jekyll-compatible hosting.
+
+## Enhance Collections Functionality
+
+### Overview
+
+The "Enhance Collections" feature allows users to improve previously saved collections with more detailed tour data. This is a two-step approach:
+
+1. First, collections are scraped with basic metadata (faster initial process)
+2. Later, these collections can be enhanced with comprehensive tour details (optional deeper analysis)
+
+### API Implementation
+
+```python
+@app.route('/api/enhance-collections', methods=['POST'])
+def enhance_saved_collections():
+    """Enhance previously saved collections with detailed tour data"""
+    try:
+        # Get parameters from request
+        data = request.json
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+            
+        # Get user ID - required to locate the saved collections
+        user_id = data.get('userId')
+        if not user_id:
+            return jsonify({'error': 'User ID is required to locate saved collections'}), 400
+            
+        # Set the output directory path
+        output_dir = get_default_output_dir('collections')
+        user_dir = os.path.join(output_dir, f"user-{user_id}")
+        
+        # Check if the user directory exists
+        if not os.path.exists(user_dir):
+            return jsonify({'error': f'No saved collections found for user ID: {user_id}'}), 404
+            
+        # Find the most recent collections file with basic metadata
+        basic_json_files = [f for f in os.listdir(user_dir) if f.startswith('all_collections_') and f.endswith('_basic.json')]
+        
+        if not basic_json_files:
+            return jsonify({'error': f'No basic collections file found in {user_dir}'}), 404
+            
+        # Use the most recent basic file
+        collections_file = os.path.join(user_dir, sorted(basic_json_files)[-1])
+        
+        # Start a background thread for enhancement
+        threading.Thread(
+            target=enhance_collections_thread,
+            args=(collections_file, user_id)
+        ).start()
+        
+        return jsonify({
+            'success': True, 
+            'message': 'Enhancement of saved collections started',
+            'statusEndpoint': '/api/collections-status'
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+```
+
+### Enhancement Thread Implementation
+
+The enhancement process runs in a background thread to keep the UI responsive:
+
+```python
+def enhance_collections_thread(collections_file, user_id):
+    """Background thread to enhance previously saved collections with detailed tour data"""
+    try:
+        # Load collections from the JSON file
+        with open(collections_file, 'r', encoding='utf-8') as f:
+            collections = json.load(f)
+        
+        # Create a KomootAdapter for enhancing tour data
+        adapter = KomootAdapter()
+        
+        # Enhance each collection one by one
+        enhanced_collections = []
+        enhanced_count = 0
+        total_enhanced_tours = 0
+        
+        for i, collection in enumerate(collections):
+            try:
+                # Check if collection is already enhanced
+                tour_count = len(collection.get('tours', []))
+                already_enhanced_count = sum(1 for tour in collection.get('tours', []) 
+                                         if (tour.get('distance_km') is not None) and
+                                         not tour.get('name', '').startswith(f"Tour {tour.get('id', '')}"))
+                
+                # Skip already enhanced collections (>80% enhanced tours)
+                if tour_count > 0 and already_enhanced_count / tour_count > 0.8:
+                    collection['is_enhanced'] = True
+                    enhanced_collections.append(collection)
+                    enhanced_count += 1
+                    continue
+                
+                # Only enhance if the collection has a URL
+                if 'url' not in collection:
+                    enhanced_collections.append(collection)
+                    continue
+                
+                # Use fetch_all_tours_from_collection to enhance the collection
+                enhanced_collection = fetch_all_tours_from_collection(adapter, collection['url'], collections_status)
+                
+                if enhanced_collection:
+                    # Ensure the enhanced collection preserves the original ID and creator info
+                    if 'id' not in enhanced_collection and 'id' in collection:
+                        enhanced_collection['id'] = collection['id']
+                    
+                    if 'creator' not in enhanced_collection and 'creator' in collection:
+                        enhanced_collection['creator'] = collection['creator']
+                    
+                    # Count newly enhanced tours
+                    newly_enhanced_tours = 0
+                    if 'tours' in enhanced_collection:
+                        for tour in enhanced_collection['tours']:
+                            if (tour.get('distance_km') is not None) and not tour['name'].startswith(f"Tour {tour['id']}"):
+                                newly_enhanced_tours += 1
+                    
+                    # Mark as enhanced for UI state
+                    enhanced_collection['is_enhanced'] = (newly_enhanced_tours > 0)
+                    enhanced_collections.append(enhanced_collection)
+                    total_enhanced_tours += newly_enhanced_tours
+                else:
+                    enhanced_collections.append(collection)
+                
+                # Update progress
+                enhanced_count += 1
+                
+            except Exception as e:
+                # Keep original if enhancement fails
+                enhanced_collections.append(collection)
+        
+        # Save the enhanced collections back to file with _enhanced suffix
+        collections_manager.set_user_id(user_id)
+        collections_manager.save_collections_data(enhanced_collections, user_id, enhance_tours=True)
+        
+    except Exception as e:
+        # Handle any uncaught exceptions
+        error_msg = str(e)
+        logger.error(f"Error in collection enhancement thread: {error_msg}")
+        with collections_lock:
+            collections_status['status'] = 'error'
+            collections_status['error'] = error_msg
+```
+
+### Key Enhancement Features
+
+The enhancement process includes several intelligent features:
+
+1. **Smart Skip Logic**: Already enhanced collections are detected and skipped
+2. **Progress Tracking**: Real-time progress updates during the enhancement process
+3. **Error Resilience**: Failed enhancements preserve original data
+4. **Metadata Flagging**: Collections are explicitly marked as enhanced for UI feedback
+5. **Timestamped Outputs**: Enhanced collections are saved with timestamp and suffix
+6. **Detection Heuristics**: Multiple methods to determine if tours are already enhanced
+
+### Enhanced Collection Data Storage
+
+Enhanced collections are saved with special handling:
+
+```python
+# Save collections to JSON files with enhancement indicator
+status_suffix = "_enhanced" if enhance_tours else "_basic"
+timestamped_json_path = os.path.join(self.output_dir, 
+    f"all_collections_{timestamp}{status_suffix}.json")
+```
+
+This two-step approach provides several benefits:
+- Faster initial collection saving
+- Optional enhancement for users who need detailed data
+- Clear indication of enhancement status
+- Preservation of original data
+
+## Pagination and Data Collection Strategies
+
+### Multi-Page Content Extraction
+
+For collections with many tours, the application implements sophisticated pagination strategies:
+
+```python
+# Different approaches to fetch all pages
+urls_to_try = []
+
+# Approach 1: Systematic pagination with ?page=N parameter
+max_pages = 20  # Safety limit
+for page in range(2, max_pages + 1):
+    page_url = f"{collection_url}?page={page}"
+    urls_to_try.append(('page', page_url))
+
+# Approach 2: Different page sizes for single-page retrieval
+page_sizes = [50, 100, 200, 300, 500]
+for page_size in page_sizes:
+    size_url = f"{collection_url}?size={page_size}"
+    urls_to_try.append(('size', size_url))
+```
+
+These pages are fetched concurrently with a thread pool:
+
+```python
+# Use a thread pool to fetch pages concurrently
+with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+    future_to_url = {executor.submit(process_url, url_tuple): url_tuple 
+                     for url_tuple in urls_to_try}
+```
+
+This approach ensures maximum tour retrieval across different Komoot page layouts and configurations.
