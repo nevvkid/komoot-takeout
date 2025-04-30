@@ -43,6 +43,8 @@ The `CollectionManager` class handles all collection-related operations:
 - Saving collection data to JSON and CSV files
 - Generating Jekyll configuration files from collections
 - Organizing data by user ID
+- Tour enhancement to replace generic "Tour ID" names with descriptive titles
+- Proper handling of metadata and related tour information
 
 ### Tour Extraction and Processing
 
@@ -53,6 +55,7 @@ The `CollectionManager` class handles all collection-related operations:
 | `extract_tours_from_html()` | Parses tour data from HTML collection pages |
 | `fetch_all_tours_from_collection()` | Retrieves all tours from a collection with pagination handling |
 | `process_tours()` | Background worker that processes multiple tours concurrently |
+| `enhance_collections.py` | Standalone script to enhance tour names in existing collection exports |
 
 ### API Endpoints
 
@@ -98,10 +101,23 @@ The `CollectionManager` class handles all collection-related operations:
 2. Background thread scrapes collection data from Komoot
 3. The application:
    - Extracts all tours from each collection
+   - Enhances tour data with descriptive names and complete metadata
    - Handles pagination for large collections
    - Processes metadata (cover images, descriptions, etc.)
    - Downloads all tours in the collection if requested
 4. Results can be exported as JSON or CSV files
+5. Post-processing with enhance_collections.py allows fixing generic tour names in existing exports
+
+## Tour Data Enhancement
+
+The tour enhancement process ensures exported data is maximally useful:
+1. Tours initially extracted from collections often have generic "Tour ID" names
+2. Enhancement process:
+   - First tries to scrape tour pages for basic information (faster)
+   - Falls back to API calls for detailed data when needed
+   - Updates tour names, distances, elevations, and other metadata
+   - Preserves existing data when enhancement fails
+3. Standalone enhance_collections.py script can fix previously generated exports
 
 ## Error Handling
 

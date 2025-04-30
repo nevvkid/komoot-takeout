@@ -1545,8 +1545,18 @@ class KomootAdapter:
             logger.error(f"Error generating GPX: {str(e)}")
             raise Exception(f"Failed to generate GPX: {str(e)}")
     
-    def export_collection_to_json(self, collection, output_dir='static/exports/collections'):
-        """Export a collection to JSON format"""
+    def export_collection_to_json(self, collection, output_dir='static/exports/collections', enhance_tours=True, max_enhanced_tours=20):
+        """Export a collection to JSON format with enhanced tour data
+        
+        Args:
+            collection: The collection to export
+            output_dir: Directory to save the JSON file
+            enhance_tours: Whether to fetch full details for tours (default: True)
+            max_enhanced_tours: Maximum number of tours to enhance to avoid long processing
+            
+        Returns:
+            Path to the exported JSON file
+        """
         try:
             os.makedirs(output_dir, exist_ok=True)
             
@@ -1554,20 +1564,36 @@ class KomootAdapter:
             filename = sanitize_filename(collection['name'])
             if not filename:
                 filename = f"collection_{collection['id']}"
+            
+            # Enhance tours with full data if requested
+            collection_to_export = collection
+            if enhance_tours:
+                logger.info(f"Enhancing tours for collection {collection['name']}")
+                collection_to_export = self.enhance_collection_tours(collection, max_tours=max_enhanced_tours)
                 
             path = os.path.join(output_dir, f"{filename}-{collection['id']}.json")
             
             with open(path, 'w', encoding='utf-8') as f:
-                json.dump(collection, f, indent=2, ensure_ascii=False)
+                json.dump(collection_to_export, f, indent=2, ensure_ascii=False)
                 
-            logger.info(f"Exported collection '{collection['name']}' to {path}")
+            logger.info(f"Exported collection '{collection['name']}' to {path} with enhanced tour data")
             return path
         except Exception as e:
             logger.error(f"Error exporting collection to JSON: {str(e)}")
             return None
     
-    def export_collection_to_csv(self, collection, output_dir='static/exports/collections'):
-        """Export collection's tours to CSV format"""
+    def export_collection_to_csv(self, collection, output_dir='static/exports/collections', enhance_tours=True, max_enhanced_tours=20):
+        """Export collection's tours to CSV format with enhanced tour data
+        
+        Args:
+            collection: The collection to export
+            output_dir: Directory to save the CSV file 
+            enhance_tours: Whether to fetch full details for tours (default: True)
+            max_enhanced_tours: Maximum number of tours to enhance to avoid long processing
+            
+        Returns:
+            Path to the exported CSV file
+        """
         try:
             os.makedirs(output_dir, exist_ok=True)
             
@@ -1575,17 +1601,23 @@ class KomootAdapter:
             filename = sanitize_filename(collection['name'])
             if not filename:
                 filename = f"collection_{collection['id']}"
+            
+            # Enhance tours with full data if requested
+            collection_to_export = collection
+            if enhance_tours:
+                logger.info(f"Enhancing tours for collection {collection['name']} before CSV export")
+                collection_to_export = self.enhance_collection_tours(collection, max_tours=max_enhanced_tours)
                 
             path = os.path.join(output_dir, f"{filename}-{collection['id']}_tours.csv")
             
             # Prepare data for CSV
-            if 'tours' not in collection or not collection['tours']:
-                logger.warning(f"No tours found in collection '{collection['name']}'")
+            if 'tours' not in collection_to_export or not collection_to_export['tours']:
+                logger.warning(f"No tours found in collection '{collection_to_export['name']}'")
                 return None
                 
             # Check what fields are available in tours
             field_names = ['id', 'name', 'url']
-            sample_tour = collection['tours'][0]
+            sample_tour = collection_to_export['tours'][0]
             for key in sample_tour.keys():
                 if key not in field_names and key != 'komoot_url':  # Skip komoot_url as it's redundant
                     field_names.append(key)
@@ -1599,12 +1631,12 @@ class KomootAdapter:
             with open(path, 'w', encoding='utf-8', newline='') as f:
                 writer = csv.DictWriter(f, fieldnames=field_names, extrasaction='ignore')
                 writer.writeheader()
-                for tour in collection['tours']:
+                for tour in collection_to_export['tours']:
                     # Create a copy of the tour without redundant URL fields
                     tour_data = {k: v for k, v in tour.items() if k != 'komoot_url'}
                     writer.writerow(tour_data)
             
-            logger.info(f"Exported {len(collection['tours'])} tours from collection '{collection['name']}' to {path}")
+            logger.info(f"Exported {len(collection_to_export['tours'])} tours from collection '{collection_to_export['name']}' to {path}")
             return path
         except Exception as e:
             logger.error(f"Error exporting collection to CSV: {str(e)}")
@@ -1617,3 +1649,97 @@ class KomootAdapter:
     def get_last_tour(self):
         """Get the last processed tour"""
         return self.last_tour
+
+    def enhance_collection_tours(self, collection, max_tours=None):
+        """Enhance tour data in a collection with full details
+
+        Args:
+            collection: The collection to enhance
+            max_tours: Maximum number of tours to enhance (to avoid long processing times)
+            
+        Returns:
+            Enhanced collection with detailed tour data
+        """
+        if 'tours' not in collection or not collection['tours']:
+            logger.info(f"No tours to enhance in collection")
+            return collection
+        
+        # Create a copy of the collection to avoid modifying the original
+        collection_copy = {**collection}
+        enhanced_tours = []
+        
+        tours_to_process = collection_copy['tours']
+        if max_tours and max_tours > 0 and len(tours_to_process) > max_tours:
+            logger.info(f"Limiting enhancement to {max_tours} of {len(tours_to_process)} tours")
+            tours_to_process = tours_to_process[:max_tours]
+        
+        logger.info(f"Enhancing {len(tours_to_process)} tours in collection '{collection['name']}'")
+        
+        for i, tour in enumerate(tours_to_process):
+            tour_id = tour['id']
+            logger.info(f"Enhancing tour {i+1}/{len(tours_to_process)}: {tour_id}")
+            
+            try:
+                # Check if tour already has detailed data
+                if not tour['name'].startswith("Tour ") and 'distance_km' in tour:
+                    logger.info(f"Tour {tour_id} already has detailed data, skipping")
+                    enhanced_tours.append(tour)
+                    continue
+                    
+                # Try to fetch the full tour data
+                full_tour = None
+                
+                # First try HTML scraping as it's faster
+                try:
+                    full_tour = self._scrape_tour_page(tour_id)
+                    logger.info(f"Retrieved tour data via scraping for {tour_id}")
+                except Exception as scrape_err:
+                    logger.warning(f"Error scraping tour page: {str(scrape_err)}")
+                
+                # If scraping failed, try API call
+                if not full_tour or full_tour['name'] == f"Tour {tour_id}":
+                    try:
+                        full_tour = self.fetch_tour(tour_id, anonymous=True)
+                        logger.info(f"Retrieved tour data via API for {tour_id}")
+                    except Exception as api_err:
+                        logger.warning(f"Error fetching tour via API: {str(api_err)}")
+                
+                # If we got tour data, enhance the tour
+                if full_tour:
+                    # Create an enhanced tour with basic info from collection plus details
+                    enhanced_tour = {**tour}  # Start with original data
+                    
+                    # Update with key fields from full tour
+                    if 'name' in full_tour and full_tour['name'] != f"Tour {tour_id}":
+                        enhanced_tour['name'] = full_tour['name']
+                        logger.info(f"Updated tour name to '{full_tour['name']}'")
+                    if 'sport' in full_tour:
+                        enhanced_tour['sport'] = full_tour['sport']
+                    if 'distance' in full_tour:
+                        enhanced_tour['distance'] = full_tour['distance']
+                        enhanced_tour['distance_km'] = full_tour['distance'] / 1000.0 if full_tour['distance'] else 0
+                    if 'distance_km' in full_tour:
+                        enhanced_tour['distance_km'] = full_tour['distance_km']
+                    if 'duration' in full_tour:
+                        enhanced_tour['duration'] = full_tour['duration']
+                        enhanced_tour['duration_hours'] = full_tour['duration'] / 3600.0 if full_tour['duration'] else 0
+                    if 'elevation_up' in full_tour:
+                        enhanced_tour['elevation_up'] = full_tour['elevation_up']
+                    if 'elevation_down' in full_tour:
+                        enhanced_tour['elevation_down'] = full_tour['elevation_down']
+                    if 'date' in full_tour:
+                        enhanced_tour['date'] = full_tour['date']
+                    
+                    enhanced_tours.append(enhanced_tour)
+                else:
+                    # Couldn't get tour data, use original tour data
+                    logger.warning(f"Couldn't enhance tour {tour_id}, using original data")
+                    enhanced_tours.append(tour)
+                    
+            except Exception as e:
+                logger.error(f"Error enhancing tour {tour_id}: {str(e)}")
+                enhanced_tours.append(tour)  # Keep original if enhancement fails
+        
+        # Update collection with enhanced tours
+        collection_copy['tours'] = enhanced_tours
+        return collection_copy

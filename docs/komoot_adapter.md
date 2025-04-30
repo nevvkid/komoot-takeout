@@ -38,6 +38,7 @@ The adapter provides robust collection handling:
 - Pagination handling to retrieve all tours in large collections
 - Support for both personal and saved collection types
 - Export capabilities to JSON and CSV formats
+- Tour name enhancement for better readability in exports
 
 ### GPX Generation
 
@@ -86,6 +87,9 @@ collection = adapter.fetch_collection_by_url(collection_url)
 # Export to formats
 adapter.export_collection_to_json(collection)
 adapter.export_collection_to_csv(collection)
+
+# Enhance collection tours with detailed information
+enhanced_collection = adapter.enhance_collection_tours(collection)
 ```
 
 ## Fallback Strategies
@@ -105,6 +109,14 @@ When retrieving tours from a collection:
 2. Then tries with increased page size parameters
 3. Finally uses explicit pagination to get all tours
 4. Handles and prevents duplicate tour entries
+
+### Tour Name Enhancement
+
+The module provides multiple strategies for enhancing tour data:
+1. First attempts to scrape tour pages for faster access
+2. Falls back to API calls when needed for comprehensive data
+3. Intelligently skips already-enhanced tours to improve performance
+4. Preserves original data when enhancement fails
 
 ### GPX Generation Options
 
