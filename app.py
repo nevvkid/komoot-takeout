@@ -516,37 +516,68 @@ collections:
                 # Skip collections without tours
                 if not collection.get('tours'):
                     continue
-                    
-                # Generate a safe collection slug (no spaces, only lowercase alphanumeric and underscores)
-                collection_name = collection.get('name', f"Collection_{collection.get('id', '')}")
-                collection_slug = re.sub(r'[^a-z0-9_]', '_', collection_name.lower().strip())
-                collection_slug = re.sub(r'_+', '_', collection_slug)  # Normalize multiple underscores
+                
+                # Use the slug from the collection if available (preferred method)
+                if 'slug' in collection and collection['slug']:
+                    collection_slug = collection['slug']
+                else:
+                    # Fall back to generating a slug from the collection name
+                    collection_name = collection.get('name', f"Collection_{collection.get('id', '')}")
+                    collection_slug = re.sub(r'[^a-z0-9_-]', '-', collection_name.lower().strip())
+                    collection_slug = re.sub(r'-+', '-', collection_slug)  # Normalize multiple hyphens
+                    collection_slug = collection_slug.strip('-')  # Remove leading/trailing hyphens
+                
+                # For Jekyll, convert dashes to underscores (Jekyll collection names can't have dashes)
+                jekyll_collection_id = re.sub(r'-', '_', collection_slug)
                 
                 # Make sure slug is unique
-                base_slug = collection_slug
+                base_slug = jekyll_collection_id
                 counter = 1
-                while collection_slug in collection_slugs:
-                    collection_slug = f"{base_slug}_{counter}"
+                while jekyll_collection_id in collection_slugs:
+                    jekyll_collection_id = f"{base_slug}_{counter}"
                     counter += 1
                 
-                collection_slugs.append(collection_slug)
+                collection_slugs.append(jekyll_collection_id)
                 
-                # Add collection to config
-                new_collections_config += f"  {collection_slug}:\n"
+                # Add collection to config with dashes in the permalink (okay in URLs)
+                new_collections_config += f"  {jekyll_collection_id}:\n"
                 new_collections_config += f"    output: true\n"
                 new_collections_config += f"    permalink: /{collection_slug}/:title/\n"
-                new_collections_config += f"    title: \"{collection_name}\"\n"
-                new_collections_config += f"    description: \"{collection.get('description', 'Komoot collection')}\"\n"
+                new_collections_config += f"    title: \"{collection.get('name', 'Unnamed Collection')}\"\n"
+                
+                # Add description if available
+                if collection.get('description'):
+                    # Sanitize description by escaping quotes and removing newlines
+                    description = collection['description'].replace('"', '\\"').replace('\n', ' ')
+                    if len(description) > 200:
+                        description = description[:197] + '...'
+                    new_collections_config += f"    description: \"{description}\"\n"
+                else:
+                    new_collections_config += f"    description: \"Komoot collection\"\n"
+                    
                 new_collections_config += f"    display_order: {display_order}\n"
                 
+                if 'creator' in collection and 'display_name' in collection['creator']:
+                    new_collections_config += f"    creator: \"{collection['creator']['display_name']}\"\n"
+                
+                if 'cover_image_url' in collection:
+                    new_collections_config += f"    cover_image: \"{collection['cover_image_url']}\"\n"
+                
+                if 'url' in collection:
+                    new_collections_config += f"    komoot_url: \"{collection['url']}\"\n"
+                
+                # Add some stats if available
+                if 'tours_count' in collection:
+                    new_collections_config += f"    tours_count: {collection['tours_count']}\n"
+                    
                 display_order += 1
             
             # Create new defaults section for collections
             new_defaults_config = "\n# Add these defaults to help with GPX file handling\ndefaults:\n"
-            for collection_slug in collection_slugs:
+            for jekyll_collection_id in collection_slugs:
                 new_defaults_config += f"  - scope:\n"
-                new_defaults_config += f"      path: \"_{collection_slug}\"\n"
-                new_defaults_config += f"      type: \"{collection_slug}\"\n"
+                new_defaults_config += f"      path: \"_{jekyll_collection_id}\"\n"
+                new_defaults_config += f"      type: \"{jekyll_collection_id}\"\n"
                 new_defaults_config += f"    values:\n"
                 new_defaults_config += f"      layout: \"gpx\"\n"
             
@@ -700,21 +731,33 @@ def extract_tours_from_html(html_content, status_dict):
         # Track seen tour IDs to prevent duplicates
         seen_tour_ids = set()
         
-        # Try different selectors to find tour cards
+        # Find all cards with the modern layout first - this seems most reliable
+        modern_cards = soup.select('[data-test="tour-item"]')
+        
+        if modern_cards:
+            add_log_entry(f"Found {len(modern_cards)} cards with modern layout", status_dict)
+        
+        # Also try older/alternative layouts
         tour_card_selectors = [
             "div.tour-card", 
             ".collection-tour-card",
             "a[href*='/tour/']",
             ".tw-mb-8",  # Newer Komoot layout
-            "[data-test='tour-item']"  # Data attribute used in some layouts
+            "div[role='listitem']",  # New Komoot UI role attribute for tour items
+            ".css-1qyi8eq",  # Another potential class in newer layouts
+            "li.tw-flex"  # Tour list items in some layouts
         ]
         
         # Try each selector and collect all possible tour cards
-        all_cards = []
+        all_cards = modern_cards.copy() if modern_cards else []
+        
         for selector in tour_card_selectors:
             cards = soup.select(selector)
             if cards:
-                all_cards.extend(cards)
+                # Add only cards we haven't already found
+                for card in cards:
+                    if card not in all_cards:
+                        all_cards.append(card)
                 add_log_entry(f"Found {len(cards)} elements with selector '{selector}'", status_dict)
         
         # Process each potential tour card
@@ -751,40 +794,75 @@ def extract_tours_from_html(html_content, status_dict):
                 tour_url = f"https://www.komoot.com/tour/{tour_id}"
                 tour['url'] = tour_url
                 
-                # Try to extract tour name using multiple selectors
-                name_selectors = [
-                    "div.tour-card__title", 
-                    "h3", 
-                    "h2",
-                    "h4",
-                    ".tour-card-title",
-                    ".tw-line-clamp-2",  # New Komoot layout
-                    ".tw-font-bold"  # Often used for titles
-                ]
+                # Default name
+                tour_name = f"Tour {tour_id}"
                 
-                tour_name = f"Tour {tour_id}"  # Default name
+                # Try multiple strategies to find the title
                 
-                for selector in name_selectors:
-                    name_elems = card.select(selector)
-                    for elem in name_elems:
-                        # Skip elements that are likely not the title
-                        if elem.find('svg') or elem.select('svg'):
-                            continue
-                            
-                        text = elem.get_text(strip=True)
-                        if text and len(text) > 3 and len(text) < 100:
-                            tour_name = text
+                # Strategy 1: Find element with data-test-id="tour_title" inside this card 
+                # (this is the most reliable selector for modern Komoot)
+                title_elem = card.select_one('[data-test-id="tour_title"]')
+                
+                # Strategy 2: Also check for hyphenated version
+                if not title_elem:
+                    title_elem = card.select_one('[data-test-id="tour-title"]')
+                
+                # Strategy 3: Look for h3 elements inside anchor tags that link to the tour
+                if not title_elem:
+                    tour_link = card.select_one(f"a[href*='/tour/{tour_id}']")
+                    if tour_link:
+                        title_elem = tour_link.find('h3')
+                
+                # Strategy 4: Look for any heading elements
+                if not title_elem:
+                    for heading in ['h3', 'h2', 'h4']:
+                        heading_elem = card.find(heading)
+                        if heading_elem:
+                            title_elem = heading_elem
                             break
+                
+                # Strategy 5: Look for elements with title-like classes
+                if not title_elem:
+                    title_classes = [
+                        '.tw-font-bold',
+                        '.tour-card__title',
+                        '.tw-text-xl',
+                        '.tw-text-2xl'
+                    ]
+                    for cls in title_classes:
+                        cls_elem = card.select_one(cls)
+                        if cls_elem:
+                            title_elem = cls_elem
+                            break
+                
+                # If we found a title element, extract the text
+                if title_elem:
+                    title_text = title_elem.get_text(strip=True)
+                    if title_text:
+                        tour_name = title_text
                 
                 tour['name'] = tour_name
                 
                 # Extract date if available
-                date_selectors = ["time.tour-card__date", "time[datetime]", ".tour-date"]
+                date_selectors = [
+                    "time.tour-card__date", 
+                    "time[datetime]", 
+                    ".tour-date",
+                    "time",  # Generic time element
+                    ".tw-text-gray-500"  # Often contains date in gray text
+                ]
                 for selector in date_selectors:
                     date_elem = card.select_one(selector)
                     if date_elem and 'datetime' in date_elem.attrs:
                         tour['date'] = date_elem['datetime']
                         break
+                    elif date_elem:
+                        # Try to extract date from text content - look for date patterns
+                        date_text = date_elem.get_text(strip=True)
+                        date_match = re.search(r'\d{1,2}[./-]\d{1,2}[./-]\d{2,4}', date_text)
+                        if date_match:
+                            tour['date_text'] = date_match.group(0)
+                            break
                 
                 # Extract stats using multiple approaches
                 # Look for stats elements with various selectors
@@ -795,32 +873,33 @@ def extract_tours_from_html(html_content, status_dict):
                     ".tour-card-stat",
                     ".tw-text-sm",  # Often contains stats in newer layouts
                     "span.tour-stats__stat-text",
-                    "div.tour-card__stats-section span"
+                    "div.tour-card__stats-section span",
+                    ".tw-inline-flex",  # Stats in flex containers
+                    ".tw-font-normal"  # Normal weight text often contains stats
                 ]
                 
                 for selector in stats_selectors:
-                    stats = card.select(selector)
-                    for stat in stats:
-                        text = stat.get_text(strip=True)
+                    stat_elems = card.select(selector)
+                    for elem in stat_elems:
+                        text = elem.get_text(strip=True).lower()
                         
                         # Extract distance
-                        if 'km' in text.lower() and 'distance' not in tour:
-                            dist_match = re.search(r'([\d.,]+)', text)
-                            if dist_match:
+                        if ('km' in text or 'mi' in text) and 'distance_km' not in tour:
+                            distance_match = re.search(r'([\d.,]+)', text)
+                            if distance_match:
                                 try:
-                                    distance_km = float(dist_match.group(1).replace(',', '.'))
-                                    tour['distance'] = distance_km * 1000  # Convert to meters
+                                    distance_km = float(distance_match.group(1).replace(',', '.'))
                                     tour['distance_km'] = distance_km
                                 except:
                                     pass
                         
                         # Extract duration
-                        elif ('h' in text or 'min' in text.lower()) and 'duration' not in tour:
+                        elif ('h' in text or 'hr' in text or 'min' in text) and 'duration' not in tour:
                             hours = 0
                             minutes = 0
                             
-                            h_match = re.search(r'(\d+)h', text)
-                            min_match = re.search(r'(\d+)min', text)
+                            h_match = re.search(r'(\d+)\s*h', text)
+                            min_match = re.search(r'(\d+)\s*min', text)
                             
                             if h_match:
                                 hours = int(h_match.group(1))
@@ -845,12 +924,22 @@ def extract_tours_from_html(html_content, status_dict):
                                     tour['elevation_down'] = int(elev_match.group(1).replace(',', '').replace('.', ''))
                                 except:
                                     pass
+                        # Extract high point
+                        elif ('high point' in text or 'highpoint' in text or 'max. height' in text) and 'high_point' not in tour:
+                            high_match = re.search(r'([\d.,]+)', text)
+                            if high_match:
+                                try:
+                                    tour['high_point'] = int(high_match.group(1).replace(',', '').replace('.', ''))
+                                except:
+                                    pass
                 
                 # Try to extract sport type
                 sport_selectors = [
                     ".tour-card__sport-type",
                     ".tour-type",
-                    ".collection-card__sport"
+                    ".collection-card__sport",
+                    "span.tw-capitalize",  # Sport types are often capitalized
+                    ".tw-rounded-full"  # Pills/badges often denote sport type
                 ]
                 
                 for selector in sport_selectors:
@@ -858,8 +947,15 @@ def extract_tours_from_html(html_content, status_dict):
                     for elem in sport_elems:
                         text = elem.get_text(strip=True).lower()
                         if text:
-                            tour['sport'] = text
-                            break
+                            # Validate it's likely a sport type before adding
+                            sport_types = ['hike', 'bike', 'run', 'mountain', 'road', 'gravel', 'skiing', 'mountainbike', 
+                                          'trail', 'walk', 'touring', 'road cycling', 'jogging', 'nordic']
+                            for sport in sport_types:
+                                if sport in text:
+                                    tour['sport'] = text
+                                    break
+                            if 'sport' in tour:
+                                break
                 
                 # Try to extract surface info (unpaved, singletrack percentages)
                 surface_selectors = [
@@ -894,20 +990,85 @@ def extract_tours_from_html(html_content, status_dict):
                     "img.lazyload", 
                     "img.lazy",
                     "img[src*='cdn-assets']",
-                    "img"
+                    "img[src*='.jpeg']",
+                    "img[src*='.jpg']",
+                    "img[src*='.png']",
+                    "img[srcset]",  # Images with srcset attribute
+                    "img.tw-absolute",  # Cover images in newer layouts
+                    "img"  # Fallback to any image as last resort
                 ]
                 
                 for selector in image_selectors:
                     img_elems = card.select(selector)
                     for img in img_elems:
+                        # Skip small icons and logos
+                        if img.get('width') and int(img.get('width')) < 50:
+                            continue
+                        if img.get('height') and int(img.get('height')) < 50:
+                            continue
+                        
+                        # Try to get high quality image URL
                         if img.get('src'):
-                            tour['image_url'] = img['src']
+                            image_url = img['src']
+                            # Remove small thumbnails or resized versions
+                            # Try to find the original version by removing query parameters
+                            if '?' in image_url:
+                                image_url = image_url.split('?')[0]
+                            tour['image_url'] = image_url
                             break
                         elif img.get('data-src'):
                             tour['image_url'] = img['data-src']
                             break
                         elif img.get('data-lazyload'):
                             tour['image_url'] = img['data-lazyload']
+                            break
+                        elif img.get('srcset'):
+                            # Extract the largest image from srcset
+                            srcset = img['srcset']
+                            # Find the last URL in the srcset (typically the largest)
+                            srcset_parts = srcset.split(',')
+                            if srcset_parts:
+                                last_part = srcset_parts[-1]
+                                url_match = re.search(r'(https?://[^\s]+)', last_part)
+                                if url_match:
+                                    tour['image_url'] = url_match.group(1)
+                                    break
+                
+                # Try to extract user/author
+                creator_selectors = [
+                    ".tour-creator",
+                    "a[href*='/user/']",
+                    ".tw-text-gray-600"  # Often contains creator name
+                ]
+                
+                for selector in creator_selectors:
+                    creator_elem = card.select_one(selector)
+                    if creator_elem:
+                        creator_text = creator_elem.get_text(strip=True)
+                        if creator_text and len(creator_text) < 50:  # Reasonable name length
+                            tour['creator_name'] = creator_text
+                            # Extract user ID from href if available
+                            if creator_elem.name == 'a' and '/user/' in creator_elem.get('href', ''):
+                                user_match = re.search(r'/user/([^/]+)', creator_elem['href'])
+                                if user_match:
+                                    tour['creator_id'] = user_match.group(1)
+                            break
+                
+                # Try to extract country/region
+                region_selectors = [
+                    ".tour-card__region",
+                    ".tour-location",
+                    ".tw-text-gray-500"  # Often contains location info
+                ]
+                
+                for selector in region_selectors:
+                    region_elem = card.select_one(selector)
+                    if region_elem:
+                        region_text = region_elem.get_text(strip=True)
+                        # Skip if it's just a date or has numbers (likely not a region)
+                        if (region_text and not re.search(r'\d', region_text) and 
+                            'ago' not in region_text.lower() and len(region_text) < 50):
+                            tour['region'] = region_text
                             break
                 
                 # Add to results
@@ -1745,8 +1906,21 @@ def download_collection_tours():
         # Get user ID from request if available
         user_id = data.get('userId')
         
+        # If user_id is not in request, try to extract it from the first collection URL
+        if not user_id:
+            for collection in collections:
+                if 'url' in collection:
+                    extracted_id = extract_user_id_from_url(collection['url'])
+                    if extracted_id:
+                        user_id = extracted_id
+                        logger.info(f"Extracted user ID from collection URL: {user_id}")
+                        break
+        
         # GPX options
         gpx_options = data.get('gpxOptions', {})
+        
+        # Log details for debugging
+        logger.info(f"Starting collection tours download with user_id: {user_id}")
         
         # Reset status
         with processing_lock:
@@ -2321,7 +2495,7 @@ def scrape_public_collections_thread(collection_urls):
                 try:
                     url = url.strip()
                     if not url:
-                        return None
+                        return {'user_id': None, 'collections': []}
                         
                     add_log_entry(f"Processing URL: {url}", collections_status)
                     
@@ -2362,6 +2536,13 @@ def scrape_public_collections_thread(collection_urls):
                                         page_collections = anonymous_adapter.extract_collections_from_page(response.text, coll_type)
                                         add_log_entry(f"Found {len(page_collections)} collections on page", collections_status)
                                         
+                                        # Set the user ID for each collection explicitly
+                                        for collection in page_collections:
+                                            if 'creator' not in collection:
+                                                collection['creator'] = {}
+                                            if 'id' not in collection['creator']:
+                                                collection['creator']['id'] = page_user_id
+                                        
                                         # Process each collection to get full details
                                         detailed_collections = []
                                         for collection in page_collections:
@@ -2370,6 +2551,11 @@ def scrape_public_collections_thread(collection_urls):
                                                     # Use our enhanced function to get all tours
                                                     detailed = fetch_all_tours_from_collection(anonymous_adapter, collection['url'], collections_status)
                                                     if detailed:
+                                                        # Ensure user ID is preserved
+                                                        if 'creator' not in detailed:
+                                                            detailed['creator'] = {}
+                                                        if 'id' not in detailed['creator']:
+                                                            detailed['creator']['id'] = page_user_id
                                                         detailed_collections.append(detailed)
                                                     else:
                                                         detailed_collections.append(collection)
@@ -2403,6 +2589,13 @@ def scrape_public_collections_thread(collection_urls):
                                 if 'creator' in collection and 'id' in collection['creator']:
                                     collection_user_id = collection['creator']['id']
                                 
+                                # If we have a user ID from URL, ensure it's set in the collection
+                                if extracted_user_id and not collection_user_id:
+                                    if 'creator' not in collection:
+                                        collection['creator'] = {}
+                                    collection['creator']['id'] = extracted_user_id
+                                    collection_user_id = extracted_user_id
+                                
                                 return {
                                     'user_id': collection_user_id or extracted_user_id,
                                     'collections': [collection]
@@ -2428,17 +2621,30 @@ def scrape_public_collections_thread(collection_urls):
             future_to_url = {executor.submit(process_url, url): url for url in collection_urls}
             
             # Process results as they complete
-            for i, future in enumerate(concurrent.futures.as_completed(future_to_url)):
+            for future in concurrent.futures.as_completed(future_to_url):
                 try:
+                    # Get the URL that this future was processing
+                    url = future_to_url[future]
+                    # Get the result from the future
                     result = future.result()
+                    
                     if result:
                         # Extract collections from result
                         if result['collections']:
+                            # Ensure user ID is properly set in each collection
+                            for collection in result['collections']:
+                                if result['user_id']:
+                                    if 'creator' not in collection:
+                                        collection['creator'] = {}
+                                    if 'id' not in collection['creator'] or not collection['creator']['id']:
+                                        collection['creator']['id'] = result['user_id']
+                            
                             all_collections.extend(result['collections'])
                         
                         # Update user ID if we found one
                         if not user_id and result['user_id']:
                             user_id = result['user_id']
+                            add_log_entry(f"Updated primary user ID to: {user_id}", collections_status)
                     
                     # Update progress
                     processed_urls += 1
@@ -2449,6 +2655,14 @@ def scrape_public_collections_thread(collection_urls):
                 except Exception as e:
                     add_log_entry(f"Error processing URL result: {str(e)}", collections_status)
         
+        # Ensure all collections have the user ID properly set
+        if user_id:
+            for collection in all_collections:
+                if 'creator' not in collection:
+                    collection['creator'] = {}
+                if 'id' not in collection['creator'] or not collection['creator']['id']:
+                    collection['creator']['id'] = user_id
+        
         # Save the results
         with collections_lock:
             collections_status['results'] = all_collections
@@ -2457,9 +2671,9 @@ def scrape_public_collections_thread(collection_urls):
             collections_status['collections_completed'] = processed_urls
             collections_status['collections_found'] = len(all_collections)
         
-        add_log_entry(f"Public collections scraping completed. Found {len(all_collections)} collections.", collections_status)
+        add_log_entry(f"Public collections scraping completed. Found {len(all_collections)} collections with user ID: {user_id}", collections_status)
         
-        # Save collections data to files if there are results, with user_id
+        # Save collections data to files if there are results, with explicit user_id
         if all_collections:
             collections_manager.save_collections_data(all_collections, user_id)
         
@@ -2482,6 +2696,9 @@ def download_collection_tours_thread(collections, output_dir, include_metadata, 
         
         # Create base output directory
         os.makedirs(output_dir, exist_ok=True)
+        
+        # Log the user ID we received
+        add_log_entry(f"Starting download with user ID: {user_id}", processing_status)
         
         # Process collections to remove duplicate tours
         for collection in collections:
@@ -2518,6 +2735,52 @@ def download_collection_tours_thread(collections, output_dir, include_metadata, 
         completed_collections = 0
         all_results = []
         
+        # If no user_id was provided, try to extract it from the first collection
+        if not user_id:
+            for collection in collections:
+                if 'creator' in collection and 'id' in collection['creator']:
+                    user_id = collection['creator']['id']
+                    add_log_entry(f"Using creator ID from collection as primary user ID: {user_id}", processing_status)
+                    break
+                
+                # If still no user ID, try to extract from URL
+                if collection.get('url'):
+                    extracted_id = extract_user_id_from_url(collection.get('url'))
+                    if extracted_id:
+                        user_id = extracted_id
+                        add_log_entry(f"Extracted user ID from URL as primary user ID: {user_id}", processing_status)
+                        break
+        
+        # First create collections directory
+        collections_base_dir = os.path.join(output_dir, 'collections')
+        os.makedirs(collections_base_dir, exist_ok=True)
+        
+        # Create user directory under collections directory
+        if user_id:
+            # Create a single user directory for all collections
+            user_dir = os.path.join(collections_base_dir, f"user-{user_id}")
+        else:
+            # Fallback if no user ID is found
+            add_log_entry("WARNING: No user ID found, using anonymous folder", processing_status)
+            user_dir = os.path.join(collections_base_dir, "user-anonymous")
+        
+        # Create user directory
+        os.makedirs(user_dir, exist_ok=True)
+        
+        # Create user's index.html
+        user_name = None
+        if len(collections) > 0 and 'creator' in collections[0] and 'display_name' in collections[0]['creator']:
+            user_name = collections[0]['creator']['display_name']
+            
+        index_html_content = create_user_index_html(user_id or "anonymous", user_name)
+        
+        with open(os.path.join(user_dir, 'index.html'), 'w', encoding='utf-8') as f:
+            f.write(index_html_content)
+        
+        # Create collections folder for this user
+        collections_dir = os.path.join(user_dir, 'collections')
+        os.makedirs(collections_dir, exist_ok=True)
+        
         # Determine optimal number of workers based on collection count
         collection_workers = min(3, total_collections)
         
@@ -2530,43 +2793,10 @@ def download_collection_tours_thread(collections, output_dir, include_metadata, 
                     collection_id = collection.get('id')
                     collection_name = collection.get('name', f"Collection_{collection_id}")
                     
-                    # Use the common user ID if provided, otherwise extract from collection
-                    current_user_id = user_id
-                    user_name = None
-                    
-                    # If no common user ID was provided, try to extract from this collection
-                    if not current_user_id:
-                        if 'creator' in collection:
-                            if 'id' in collection['creator']:
-                                current_user_id = collection['creator']['id']
-                                add_log_entry(f"Using creator ID from collection: {current_user_id}", processing_status)
-                            if 'display_name' in collection['creator']:
-                                user_name = collection['creator']['display_name']
-                        
-                        # If still no user ID, try to extract from URL
-                        if not current_user_id and collection.get('url'):
-                            extracted_user_id = extract_user_id_from_url(collection.get('url'))
-                            if extracted_user_id:
-                                current_user_id = extracted_user_id
-                                add_log_entry(f"Extracted user ID from URL: {current_user_id}", processing_status)
-                    
                     # Create slug for collection folder
                     collection_slug = get_collection_slug(collection.get('url', ''), collection_name, max_slug_length=50)
                     
-                    # Create user folder
-                    user_dir = os.path.join(output_dir, f"user-{current_user_id}")
-                    os.makedirs(user_dir, exist_ok=True)
-                    
-                    # Create user's index.html
-                    index_html_content = create_user_index_html(current_user_id, user_name)
-                    with open(os.path.join(user_dir, 'index.html'), 'w', encoding='utf-8') as f:
-                        f.write(index_html_content)
-                    
-                    # Create collections folder for this user
-                    collections_dir = os.path.join(user_dir, 'collections')
-                    os.makedirs(collections_dir, exist_ok=True)
-                    
-                    # Create folder for this specific collection
+                    # Create folder for this specific collection in the user's collections directory
                     collection_dir = os.path.join(collections_dir, collection_slug)
                     os.makedirs(collection_dir, exist_ok=True)
                     
@@ -2744,8 +2974,8 @@ def download_collection_tours_thread(collections, output_dir, include_metadata, 
                                 
                                 # Update progress
                                 with processing_lock:
-                                    processing_status['progress'] = completed_tours / total_tours
                                     processing_status['tours_completed'] = completed_tours
+                                    processing_status['progress'] = completed_tours / total_tours
                     
                     # Create a summary file for this collection
                     try:

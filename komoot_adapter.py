@@ -40,6 +40,17 @@ def sanitize_filename(name):
         name = name[:100]
     return name
 
+def extract_slug_from_url(url):
+    """Extract the slug part from a Komoot collection URL"""
+    if not url:
+        return ""
+        
+    # Pattern to match the slug part after the collection ID
+    match = re.search(r'/collection/\d+/?-?([a-zA-Z0-9-]+)?', url)
+    if match and match.group(1):
+        return match.group(1)
+    return ""
+
 try:
     from bs4 import BeautifulSoup
     BS4_AVAILABLE = True
@@ -486,33 +497,48 @@ class KomootAdapter:
             # Track unique tour IDs to prevent duplicates
             tour_ids_seen = set()
             
-            # Find all tour cards
-            tour_cards = soup.select('.tour-card')
+            # Find all tour cards - look for the structure that contains tour titles
+            tour_cards = []
             
+            # First try the modern layout with data-test="tour-item"
+            modern_cards = soup.select('[data-test="tour-item"]')
+            if modern_cards:
+                tour_cards.extend(modern_cards)
+                logger.info(f"Found {len(modern_cards)} tour cards with [data-test='tour-item']")
+            
+            # Try the more generic selectors as backups
             if not tour_cards:
-                # Try alternate selectors
-                tour_cards = soup.select('.collection-tour-card')
+                # Try different selectors for tour cards
+                backup_selectors = [
+                    '.tour-card',
+                    '.collection-tour-card',
+                    'div[role="listitem"]',
+                    '.css-1qyi8eq',
+                    'a[href*="/tour/"]'
+                ]
                 
-            if not tour_cards:
-                # Try to find all tour links
-                tour_cards = soup.find_all('a', href=re.compile(r'/tour/\d+'))
+                for selector in backup_selectors:
+                    backup_cards = soup.select(selector)
+                    if backup_cards:
+                        tour_cards.extend(backup_cards)
+                        logger.info(f"Found {len(backup_cards)} tour cards with '{selector}'")
                 
-            logger.info(f"Found {len(tour_cards)} tour cards on page {page_url}")
+            logger.info(f"Total found: {len(tour_cards)} tour cards on page {page_url}")
             
             for card in tour_cards:
                 try:
                     # Find the link to the tour
-                    link = None
+                    tour_link = None
                     if card.name == 'a' and '/tour/' in card.get('href', ''):
-                        link = card
+                        tour_link = card
                     else:
-                        link = card.find('a', href=re.compile(r'/tour/\d+'))
+                        tour_link = card.select_one('a[href*="/tour/"]')
                     
-                    if not link or not link.get('href'):
+                    if not tour_link or not tour_link.get('href'):
                         continue
                         
                     # Extract tour ID
-                    href = link.get('href', '')
+                    href = tour_link.get('href', '')
                     match = re.search(r'/tour/(\d+)', href)
                     if not match:
                         continue
@@ -525,27 +551,60 @@ class KomootAdapter:
                         
                     tour_ids_seen.add(tour_id)
                     
-                    # Get tour name
-                    name_element = card.select_one('.tour-card__title')
-                    if not name_element:
-                        # Try alternate selectors
-                        name_element = card.find('h3') or card.find('h4') or card.find('h2')
-                        
+                    # Default name
                     tour_name = f"Tour {tour_id}"
-                    if name_element:
-                        tour_name = name_element.text.strip()
+                    
+                    # Try multiple strategies to find the title
+                    
+                    # Strategy 1: Find element with data-test-id="tour_title" inside this card
+                    title_elem = card.select_one('[data-test-id="tour_title"]')
+                    
+                    # Strategy 2: Also check for hyphenated version
+                    if not title_elem:
+                        title_elem = card.select_one('[data-test-id="tour-title"]')
+                    
+                    # Strategy 3: Look for h3 inside the anchor that has the tour link
+                    if not title_elem and tour_link:
+                        title_elem = tour_link.find('h3')
+                    
+                    # Strategy 4: Look for any heading elements
+                    if not title_elem:
+                        for heading in ['h3', 'h2', 'h4']:
+                            if card.find(heading):
+                                title_elem = card.find(heading)
+                                break
+                    
+                    # Strategy 5: Look for elements with title-like classes
+                    if not title_elem:
+                        title_classes = [
+                            '.tw-font-bold',
+                            '.tour-card__title',
+                            '.tw-text-xl',
+                            '.tw-text-2xl'
+                        ]
+                        for cls in title_classes:
+                            if card.select_one(cls):
+                                title_elem = card.select_one(cls)
+                                break
+                    
+                    # If we found a title element, extract the text
+                    if title_elem:
+                        title_text = title_elem.get_text(strip=True)
+                        if title_text:
+                            tour_name = title_text
+                            logger.debug(f"Found tour name: {tour_name}")
                     
                     # Get full URL
                     tour_url = href if href.startswith('http') else f"https://www.komoot.com{href}"
                     
-                    # Extract any available statistics
+                    # Create tour data object with the extracted information
                     tour_data = {
                         'id': tour_id,
                         'name': tour_name,
                         'url': tour_url
                     }
                     
-                    # Try to extract distance
+                    # Extract any available statistics
                     distance_element = card.select_one('.tour-card__distance')
                     if distance_element:
                         distance_text = distance_element.text.strip()
@@ -587,7 +646,7 @@ class KomootAdapter:
         except Exception as e:
             logger.error(f"Error extracting tours from page {page_url}: {str(e)}")
             return []
-
+    
     def fetch_collection_by_url(self, collection_url):
         """
         Fetch a specific collection by URL, with enhanced HTML scraping
@@ -613,11 +672,18 @@ class KomootAdapter:
                 logger.warning(f"Could not extract collection ID from URL: {collection_url}")
                 raise Exception(f"Invalid collection URL: {collection_url}")
             
+            # Extract the slug from the URL if present
+            collection_slug = ""
+            slug_match = re.search(r'/collection/\d+/-([a-z0-9-]+)', collection_url)
+            if slug_match:
+                collection_slug = slug_match.group(1)
+                logger.info(f"Extracted slug from URL: {collection_slug}")
+            
             # We'll directly scrape the HTML page since API access is no longer reliable
             # Set browser-like headers for better success
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
                 'Accept-Language': 'en-US,en;q=0.5',
                 'Referer': 'https://www.komoot.com/',
                 'Connection': 'keep-alive',
@@ -637,20 +703,29 @@ class KomootAdapter:
             
             # Extract collection name
             collection_name = f"Collection {collection_id}"
-            title_elem = soup.find('h1')
+            
+            # Try multiple selectors for title, focusing on newer Komoot structure first
+            title_elem = soup.select_one('[data-test-id="c_title"]') or soup.select_one('.css-1q93hcd') or soup.select_one('h1.tw-font-bold')  # New Komoot structure
+            if not title_elem:
+                # Try alternative selectors for older versions
+                title_elem = soup.select_one("h1.collection__title") or soup.find('h1') or soup.find('h2')
+                
             if title_elem:
-                collection_name = title_elem.text.strip()
+                # Get clean text, removing any "<!-- -->" comments
+                title_text = re.sub(r'<!--\s*-->', '', title_elem.text).strip()
+                if title_text:
+                    collection_name = title_text
             
             # Extract description
             description = ""
-            desc_elem = soup.select_one('.collection-description')
+            desc_elem = soup.select_one('.collection-description') or soup.select_one('[data-test-id="c_description"]') or soup.select_one('.tw-text-gray-600.tw-whitespace-pre-line')
             if desc_elem:
                 description = desc_elem.text.strip()
                 
             # Extract user ID from URL path or profile link
             user_id = None
             creator_name = None
-            creator_elem = soup.select_one('.collection-header__user-link')
+            creator_elem = soup.select_one('.collection-header__user-link') or soup.select_one('[data-test-id="c_author"]') or soup.select_one('a[href*="/user/"]')
             if creator_elem:
                 creator_name = creator_elem.text.strip()
                 creator_href = creator_elem.get('href')
@@ -661,15 +736,25 @@ class KomootAdapter:
             
             # Extract expected number of tours
             expected_tours_count = 0
-            stats_elems = soup.select('.collection-meta-data__item')
+            
+            # Try the stats elements first
+            stats_elems = soup.select('.collection-meta-data__item') or soup.select('[data-test-id="c_stats"]') or soup.select('.tw-text-sm.tw-font-medium')
             for stat in stats_elems:
+                # Try to extract from text content directly for newer layouts
+                stat_text = stat.text.strip().lower()
+                count_match = re.search(r'(\d+)\s*(route|tour|activity|activities)', stat_text)
+                if count_match:
+                    expected_tours_count = int(count_match.group(1))
+                    break
+                
+                # Try the older layout with separate elements for title and value
                 key_elem = stat.select_one('.collection-meta-data__title')
                 value_elem = stat.select_one('.collection-meta-data__data')
                 if key_elem and value_elem:
                     key = key_elem.text.strip().lower()
                     value = value_elem.text.strip()
                     
-                    if 'route' in key or 'activit' in key:
+                    if 'route' in key or 'activit' in key or 'tour' in key:
                         # Extract tour count
                         count_match = re.search(r'(\d+)', value)
                         if count_match:
@@ -677,9 +762,50 @@ class KomootAdapter:
             
             # If no explicit count found, count tour cards
             if expected_tours_count == 0:
-                tour_cards = soup.select('.tour-card')
+                tour_cards = soup.select('.tour-card') or soup.select('[data-test-id="tour_card"]') or soup.select('a[href*="/tour/"]')
                 if tour_cards:
                     expected_tours_count = len(tour_cards)
+            
+            # Extract cover image URL
+            cover_image_url = None
+            
+            # Method 1: Look for meta og:image tag
+            og_image = soup.select_one('meta[property="og:image"]')
+            if og_image and 'content' in og_image.attrs:
+                cover_image_url = og_image['content']
+                logger.info("Found cover image from og:image meta tag")
+            
+            # Method 2: Look for collection cover image in the page
+            if not cover_image_url:
+                cover_selectors = [
+                    ".c-collection-cover__image img",
+                    ".css-1dhdnz7",  # Class from recent Komoot collections
+                    "img[alt*='Collection']",
+                    "img[sizes*='1344px']",  # Large images are likely covers
+                    ".tw-object-cover",  # New Komoot UI class for cover images
+                    "img.tw-h-full"  # Another potential cover image class
+                ]
+                
+                for selector in cover_selectors:
+                    img_elem = soup.select_one(selector)
+                    if img_elem and 'src' in img_elem.attrs:
+                        cover_image_url = img_elem['src']
+                        logger.info(f"Found cover image using selector: {selector}")
+                        break
+            
+            # Extract slug from URL
+            collection_slug = None
+            url_match = re.search(r'/collection/\d+/-([a-z0-9-]+)', collection_url)
+            if url_match:
+                collection_slug = url_match.group(1)
+            elif collection_name:
+                # Generate slug from name if not in URL
+                collection_slug = re.sub(r'[^a-z0-9]', '-', collection_name.lower())
+                collection_slug = re.sub(r'-+', '-', collection_slug)  # Remove duplicate hyphens
+                collection_slug = collection_slug.strip('-')  # Remove leading/trailing hyphens
+                # Limit slug length
+                if len(collection_slug) > 50:
+                    collection_slug = collection_slug[:50]
             
             # Initialize collection data
             collection = {
@@ -688,7 +814,9 @@ class KomootAdapter:
                 'url': collection_url,
                 'type': 'public',
                 'description': description,
-                'expected_tours_count': expected_tours_count
+                'expected_tours_count': expected_tours_count,
+                'slug': collection_slug,  # Add slug to collection data
+                'cover_image_url': cover_image_url  # Add cover image URL
             }
             
             # Add creator info if available
@@ -704,6 +832,7 @@ class KomootAdapter:
             
             # Strategy 1: Extract from current page
             page_tours = self.extract_tours_from_collection_page(collection_url)
+            
             if page_tours:
                 for tour in page_tours:
                     tour_id = tour['id']
