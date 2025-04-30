@@ -216,9 +216,22 @@ class KomootAdapter:
                 
                 tours = r.json()['_embedded']['tours']
                 for tour in tours:
-                    if tour_type != "all" and tour_type != tour['type']:
-                        continue
-                    results[tour['id']] = tour
+                    # Apply proper type filtering based on Komoot's API values
+                    if tour_type == "all":
+                        # Include all tours
+                        results[tour['id']] = tour
+                    elif tour_type == "recorded" and tour['type'] == "tour_recorded":
+                        # Match recorded tours
+                        results[tour['id']] = tour
+                    elif tour_type == "planned" and tour['type'] == "tour_planned":
+                        # Match planned tours
+                        results[tour['id']] = tour
+                    elif tour_type == "favorite" and tour.get('is_favorite', False):
+                        # Match favorite tours
+                        results[tour['id']] = tour
+                    elif tour_type == tour['type']:
+                        # Direct match for any other types
+                        results[tour['id']] = tour
             
             if not silent:
                 print(f"Found {len(results)} tours")

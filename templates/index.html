@@ -866,7 +866,12 @@
                 }
                 
                 toursCountResult.classList.remove('hidden');
-                toursCountText.textContent = `Found ${data.total_tours} tours${filterType !== 'all' ? ' (' + filterTypeSelect.options[filterTypeSelect.selectedIndex].text + ')' : ''}`;
+                
+                // Use the count for the specific filter type instead of total_tours
+                const displayCount = filterType === 'all' ? data.counts.all : 
+                                     data.counts[filterType] || data.total_tours;
+                
+                toursCountText.textContent = `Found ${displayCount} tours${filterType !== 'all' ? ' (' + filterTypeSelect.options[filterTypeSelect.selectedIndex].text + ')' : ''}`;
                 
             } catch (error) {
                 alert('Error counting tours: ' + error.message);

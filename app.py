@@ -1,27 +1,21 @@
-import os
-import re
-import time
-import json
-import csv
-import logging
-import zipfile
-import threading
-import traceback
-import subprocess
 from io import BytesIO
 from datetime import datetime
-import requests
+import logging
+import threading
+import os
+import re
+import subprocess
+import concurrent.futures
 from flask import Flask, request, jsonify, send_file, send_from_directory, render_template
 from flask_cors import CORS
 from pathlib import Path
-import concurrent.futures
-
-# Global variable for selected download folder
-SELECTED_FOLDER = None
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Global variable for selected download folder
+SELECTED_FOLDER = None
 
 # Try to import Beautiful Soup for HTML parsing
 try:
@@ -60,19 +54,19 @@ CORS(app)  # Enable CORS for all routes
 
 # Status tracking for processing
 processing_status = {
-    'status': 'idle',  # 'idle', 'running', 'completed', 'error', 'chunk_completed'
+    'status': 'idle',
     'progress': 0.0,
     'tours_found': 0,
     'tours_completed': 0,
     'error': None,
     'log': [],
     'results': [],
-    'next_chunk': 0  # For chunked processing
+    'next_chunk': 0
 }
 
 # Status tracking for collections
 collections_status = {
-    'status': 'idle',  # 'idle', 'running', 'completed', 'error'
+    'status': 'idle',
     'progress': 0.0,
     'collections_found': 0,
     'collections_completed': 0,
@@ -85,12 +79,12 @@ collections_status = {
 processing_lock = threading.Lock()
 collections_lock = threading.Lock()
 
+
 def set_selected_folder(folder_path):
     """Set the selected download folder"""
     global SELECTED_FOLDER
     SELECTED_FOLDER = folder_path
-    logger.info(f"Selected download folder set to: {folder_path}")
-    return folder_path
+
 
 def get_selected_folder():
     """Get the currently selected download folder"""
@@ -98,26 +92,28 @@ def get_selected_folder():
     
     if not SELECTED_FOLDER:
         # Default to user's home directory if not set
-        default_folder = os.path.join(str(Path.home()), "komoot-takeout")
-        os.makedirs(default_folder, exist_ok=True)
-        SELECTED_FOLDER = default_folder
+        default_folder = Path.home() / "komoot-takeout"
+        default_folder.mkdir(parents=True, exist_ok=True)
+        SELECTED_FOLDER = str(default_folder)
     
     return SELECTED_FOLDER
 
+
 def get_default_output_dir(subdirectory=''):
     """Get the default output directory, using the selected folder if available"""
-    base_dir = get_selected_folder()
+    base_dir = Path(get_selected_folder())
         
     # Create the full path including the subdirectory if provided
-    if (subdirectory):
-        output_dir = os.path.join(base_dir, subdirectory)
+    if subdirectory:
+        output_dir = base_dir / subdirectory
     else:
         output_dir = base_dir
         
     # Ensure the directory exists
-    os.makedirs(output_dir, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
     
-    return output_dir
+    return str(output_dir)
+
 
 def reset_status(status_dict):
     """Reset the status dictionary to initial values"""
@@ -125,22 +121,23 @@ def reset_status(status_dict):
     status_dict['progress'] = 0.0
     status_dict['tours_found'] = 0
     status_dict['tours_completed'] = 0
-    status_dict['collections_found'] = 0
-    status_dict['collections_completed'] = 0
+    status_dict['collections_found'] = 0 if 'collections_found' in status_dict else 0
+    status_dict['collections_completed'] = 0 if 'collections_completed' in status_dict else 0
     status_dict['error'] = None
     status_dict['log'] = []
     status_dict['results'] = []
-    status_dict['next_chunk'] = 0
+    status_dict['next_chunk'] = 0 if 'next_chunk' in status_dict else 0
+
 
 def add_log_entry(message, status_dict):
-    """Add a timestamped log entry to the status"""
+    """Add a timestamped log entry to the status dictionary"""
     timestamp = datetime.now().strftime("%H:%M:%S")
-    log_entry = f"[{timestamp}] {message}"
-    with processing_lock:
-        status_dict['log'].append(log_entry)
-        # Keep log at reasonable size
-        if len(status_dict['log']) > 200:
-            status_dict['log'] = status_dict['log'][-100:]
+    entry = f"[{timestamp}] {message}"
+    logger.info(message)
+    
+    if 'log' in status_dict:
+        status_dict['log'].append(entry)
+
 
 def sanitize_filename(name):
     """Basic function to sanitize filenames"""
@@ -155,118 +152,80 @@ def sanitize_filename(name):
         name = name[:100]
     return name
 
+
 def extract_user_id_from_url(url):
-    """Extract user ID from a collection or user URL"""
+    """Extract user ID from a Komoot URL"""
+    if not url:
+        return None
+        
+    # Try to extract from /user/{user_id} pattern
     match = re.search(r'/user/([^/]+)', url)
     if match:
         return match.group(1)
+    
     return None
 
+
 def extract_collection_id_from_url(url):
-    """Extract collection ID from a URL"""
+    """Extract collection ID from a Komoot URL"""
+    if not url:
+        return None
+        
+    # Try to extract from /collection/{collection_id} pattern
     match = re.search(r'/collection/(\d+)', url)
     if match:
         return match.group(1)
+    
     return None
 
-def get_collection_slug(collection_url, collection_name, max_slug_length=50):
-    """
-    Create a URL-friendly slug for a collection
-    
-    Args:
-        collection_url: URL of the collection
-        collection_name: Name of the collection
-        max_slug_length: Maximum length of the slug
-        
-    Returns:
-        String: slug in the format "{id}-{slug}"
-    """
-    # Extract collection ID
-    collection_id = extract_collection_id_from_url(collection_url)
-    if not collection_id:
-        # Fallback if ID can't be extracted from URL
-        return f"collection-unknown"
-    
-    # Try to extract slug from URL
-    url_slug = ""
-    match = re.search(r'/collection/\d+/-(.*?)(?:/|$)', collection_url)
-    if (match):
-        url_slug = match.group(1)
-    
-    # If URL doesn't have a slug, create one from the name
-    if not url_slug:
-        # Convert name to lowercase and replace spaces with hyphens
-        url_slug = collection_name.lower().replace(' ', '-')
-        # Remove special characters
-        url_slug = re.sub(r'[^a-z0-9-]', '', url_slug)
-        # Remove consecutive hyphens
-        url_slug = re.sub(r'-+', '-', url_slug)
-        # Remove leading/trailing hyphens
-        url_slug = url_slug.strip('-')
-    
-    # Apply length limit
-    if max_slug_length > 0 and len(url_slug) > max_slug_length:
-        url_slug = url_slug[:max_slug_length]
-    
-    # Final format: id-slug
-    return f"{collection_id}-{url_slug}"
 
-def create_user_index_html(user_id, user_name=None):
-    """
-    Create an index.html file that redirects to the user's Komoot profile
+def get_collection_slug(collection_url, collection_name, max_slug_length=50):
+    """Get a slug for a collection, based on URL or name"""
+    if not collection_url and not collection_name:
+        return "unnamed-collection"
     
-    Args:
-        user_id: User ID for the URL
-        user_name: Display name for the page title
-        
-    Returns:
-        String: HTML content
-    """
-    profile_url = f"https://www.komoot.com/user/{user_id}"
-    title = f"Komoot Profile: {user_name or user_id}"
+    # First try to extract slug from URL if it has one
+    if collection_url:
+        match = re.search(r'/collection/\d+/?-?([a-zA-Z0-9-]+)?', collection_url)
+        if match and match.group(1):
+            slug = match.group(1)
+            # Limit length if needed
+            if max_slug_length > 0 and len(slug) > max_slug_length:
+                slug = slug[:max_slug_length]
+            return slug
     
-    html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="refresh" content="0; url={profile_url}">
-    <title>{title}</title>
-    <style>
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            line-height: 1.5;
-            max-width: 600px;
-            margin: 0 auto;
-            padding: 2rem;
-            text-align: center;
-        }}
-        h1 {{
-            color: #2a6ebb;
-        }}
-        p {{
-            margin-bottom: 1rem;
-        }}
-        a {{
-            color: #2a6ebb;
-            text-decoration: none;
-        }}
-        a:hover {{
-            text-decoration: underline;
-        }}
-    </style>
-</head>
-<body>
-    <h1>{title}</h1>
-    <p>Redirecting to Komoot profile page...</p>
-    <p>If you are not redirected automatically, click <a href="{profile_url}">here</a>.</p>
-</body>
-</html>
-"""
-    return html
+    # If no slug in URL or no URL, create one from name
+    if collection_name:
+        # Convert to lowercase
+        slug = collection_name.lower()
+        # Replace non-alphanumeric characters with hyphens
+        slug = re.sub(r'[^a-z0-9]', '-', slug)
+        # Replace multiple hyphens with a single one
+        slug = re.sub(r'-+', '-', slug)
+        # Remove leading and trailing hyphens
+        slug = slug.strip('-')
+        # Limit length
+        if max_slug_length > 0 and len(slug) > max_slug_length:
+            slug = slug[:max_slug_length]
+        # If empty after processing, use a generic name
+        if not slug:
+            slug = "unnamed-collection"
+        return slug
+    
+    # Fallback to collection ID
+    if collection_url:
+        match = re.search(r'/collection/(\d+)', collection_url)
+        if match:
+            return f"collection-{match.group(1)}"
+    
+    return "unnamed-collection"
+
 
 def make_request_with_retry(url, headers, max_retries=3, timeout=30):
     """Make a request with retry logic for better reliability"""
+    import requests
+    import time
+    
     for attempt in range(max_retries):
         try:
             response = requests.get(url, headers=headers, timeout=timeout)
@@ -278,3100 +237,366 @@ def make_request_with_retry(url, headers, max_retries=3, timeout=30):
             else:
                 raise e
 
+
 # Collection Manager class for handling collections
 class CollectionManager:
     def __init__(self, output_dir=None):
-        self.base_output_dir = output_dir if output_dir else get_default_output_dir('collections')
-        self.output_dir = self.base_output_dir
-        
+        self.output_dir = output_dir or get_default_output_dir('collections')
+        self.user_id = None
+        logger.info(f"Collection Manager initialized with output_dir: {self.output_dir}")
+    
     def set_user_id(self, user_id):
-        """Set user ID to organize collections"""
-        if user_id:
-            self.output_dir = os.path.join(self.base_output_dir, f"user-{user_id}")
-        else:
-            self.output_dir = self.base_output_dir
-        
+        """Set the user ID for organization"""
+        self.user_id = user_id
+    
     def save_collections_data(self, collections, user_id=None, enhance_tours=False):
-        """Save collections data to JSON and CSV files with enhanced formatting
+        """
+        Save collections data to files with user ID if available
         
         Args:
-            collections: List of collections to save
-            user_id: Optional user ID for organizing files
-            enhance_tours: Whether to enhance tour data (can be time-consuming)
-        
+            collections: List of collection objects to save
+            user_id: Optional user ID for organization
+            enhance_tours: Whether these collections have enhanced tour data
+            
         Returns:
-            bool: True if successful, False otherwise
+            Dict with output paths information
+            
+        Raises:
+            Exception: If saving collections data fails
         """
         try:
-            logger.info(f"Saving data for {len(collections)} collections")
-            
-            # Update output directory with user ID if provided
             if user_id:
-                self.set_user_id(user_id)
+                self.user_id = user_id
             
-            # Create output directory if it doesn't exist
-            os.makedirs(self.output_dir, exist_ok=True)
+            if not self.user_id and not user_id:
+                # Try to extract user ID from the first collection
+                for collection in collections:
+                    if 'creator' in collection and 'id' in collection['creator']:
+                        self.user_id = collection['creator']['id']
+                        break
             
-            # Create index.html for user
-            user_name = None
-            if len(collections) > 0 and 'creator' in collections[0]:
-                user_name = collections[0]['creator'].get('display_name')
-                
-            if user_id:
-                index_html_content = create_user_index_html(user_id, user_name)
-                with open(os.path.join(self.output_dir, 'index.html'), 'w', encoding='utf-8') as f:
-                    f.write(index_html_content)
-                logger.info(f"Created index.html redirect for user {user_id}")
+            # If we have a user ID, create a user-specific directory
+            if self.user_id:
+                self.output_dir = str(Path(get_default_output_dir('collections')) / f"user-{self.user_id}")
             
+            # Ensure the output directory exists
+            Path(self.output_dir).mkdir(parents=True, exist_ok=True)
+            
+            # Create a timestamp for filenames
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             
-            # Only enhance tour data if explicitly requested
-            if enhance_tours:
-                logger.info("Enhancing tour data for all collections (this may take some time)")
-                enhanced_collections = []
-                for collection in collections:
-                    try:
-                        # Use KomootAdapter to enhance each collection's tours
-                        adapter = KomootAdapter()
-                        enhanced_collection = adapter.enhance_collection_tours(collection, max_tours=None)
-                        enhanced_collections.append(enhanced_collection)
-                        logger.info(f"Enhanced tour data for collection: {collection['name']}")
-                    except Exception as e:
-                        logger.warning(f"Error enhancing collection {collection.get('name', 'Unknown')}: {str(e)}")
-                        enhanced_collections.append(collection)  # Use original if enhancement fails
-            else:
-                # Use original collections without enhancement
-                logger.info("Saving collections without tour enhancement")
-                enhanced_collections = collections.copy()
-            
             # Save collections to JSON files
-            # Only save the timestamped version (removing redundant all_collections.json file)
             status_suffix = "_enhanced" if enhance_tours else "_basic"
-            timestamped_json_path = os.path.join(self.output_dir, f"all_collections_{timestamp}{status_suffix}.json")
+            json_path = Path(self.output_dir) / f"all_collections.json"
+            timestamped_json_path = Path(self.output_dir) / f"all_collections_{timestamp}{status_suffix}.json"
+            
+            import json
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(collections, f, indent=2, ensure_ascii=False)
+            
             with open(timestamped_json_path, 'w', encoding='utf-8') as f:
-                json.dump(enhanced_collections, f, indent=2, ensure_ascii=False)
-            logger.info(f"Saved timestamped collections to {timestamped_json_path}")
+                json.dump(collections, f, indent=2, ensure_ascii=False)
             
-            # Create separate CSV files for each collection's tours with enhanced metadata
-            for collection in enhanced_collections:
+            logger.info(f"Saved {len(collections)} collections to {json_path} and {timestamped_json_path}")
+            
+            # Create collections directory for individual collection data
+            collections_dir = Path(self.output_dir) / 'collections'
+            collections_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Save individual collection data and tours
+            for collection in collections:
+                if 'id' not in collection:
+                    continue
+                
+                # Create slug for folder name
+                slug = get_collection_slug(collection.get('url', ''), collection.get('name', ''))
+                collection_dir = collections_dir / slug
+                collection_dir.mkdir(parents=True, exist_ok=True)
+                
+                # Save collection info
+                collection_info_path = collection_dir / 'collection_info.json'
+                with open(collection_info_path, 'w', encoding='utf-8') as f:
+                    json.dump(collection, f, indent=2, ensure_ascii=False)
+                
+                # Create human-readable summary
+                summary_path = collection_dir / 'collection_info.txt'
+                with open(summary_path, 'w', encoding='utf-8') as f:
+                    f.write(f"Collection: {collection.get('name', 'Unnamed')}\n")
+                    f.write(f"ID: {collection.get('id', 'Unknown')}\n")
+                    f.write(f"Type: {collection.get('type', 'Unknown')}\n")
+                    if 'tours' in collection:
+                        f.write(f"Tours: {len(collection['tours'])}\n")
+                    if 'creator' in collection and 'display_name' in collection['creator']:
+                        f.write(f"Creator: {collection['creator']['display_name']}\n")
+                    if 'description' in collection and collection['description']:
+                        f.write(f"\nDescription:\n{collection['description']}\n")
+                
+                # Export tours as CSV
                 if 'tours' in collection and collection['tours']:
-                    # Process tours to remove duplicates
-                    unique_tours = {}
-                    for tour in collection['tours']:
-                        tour_id = tour['id']
-                        # Use the more detailed version of the tour
-                        if tour_id in unique_tours:
-                            # If the new tour has a more descriptive name (not just "Tour ID"), use it
-                            if unique_tours[tour_id]['name'].startswith('Tour ') and not tour['name'].startswith('Tour '):
-                                unique_tours[tour_id] = tour
-                        else:
-                            unique_tours[tour_id] = tour
+                    import csv
+                    csv_path = collection_dir / f"{slug}_tours.csv"
                     
-                    # Convert back to list
-                    deduplicated_tours = list(unique_tours.values())
+                    # Define fields to include in the CSV
+                    fields = ['id', 'name', 'url', 'sport', 'distance_km', 'duration', 
+                             'elevation_up', 'elevation_down', 'date', 'region']
                     
-                    # Get URL-friendly slug for the collection
-                    slug = get_collection_slug(collection.get('url', ''), collection.get('name', ''))
-                    
-                    # Create collections directory if needed
-                    collections_dir = os.path.join(self.output_dir, 'collections')
-                    os.makedirs(collections_dir, exist_ok=True)
-                    
-                    csv_filename = f"{slug}_tours.csv"
-                    csv_path = os.path.join(collections_dir, csv_filename)
-                    
-                    # Create a dataset similar to the bikepacking.com format
-                    csv_tours = []
-                    
-                    # Post-process tours with enhanced fields
-                    for tour in deduplicated_tours:
-                        # Create standardized tour object
-                        distance_km = tour.get('distance_km', tour.get('distance', 0)/1000 if tour.get('distance', 0) else 0)
-                        
-                        csv_tour = {
-                            "id": tour.get('id', ''),
-                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "name": tour.get('name', f"Tour {tour.get('id', 'unknown')}"),
-                            "distance_km": f"{distance_km:.1f}" if distance_km else "Unknown",
-                            "distance_mi": f"{distance_km * 0.621371:.1f}" if distance_km else "Unknown",
-                            "duration": f"{tour.get('duration_hours', tour.get('duration', 0)/3600):.1f}" if tour.get('duration', 0) else "Unknown",
-                            "unpaved_percentage": tour.get('unpaved_percentage', ''),
-                            "singletrack_percentage": tour.get('singletrack_percentage', ''),
-                            "rideable_percentage": tour.get('rideable_percentage', ''),
-                            "total_ascent": tour.get('elevation_up', ''),
-                            "total_descent": tour.get('elevation_down', ''),
-                            "high_point": tour.get('high_point', ''),
-                            "country": tour.get('country', ''),
-                            "region": collection.get('region', ''),
-                            "collection_name": collection.get('name', ''),
-                            "collection_id": collection.get('id', ''),
-                            "description": tour.get('description', ''),
-                            "url": tour.get('url', f"https://www.komoot.com/tour/{tour.get('id', '')}"),
-                            "gpx_url": tour.get('gpx_url', ''),
-                            "image_url": tour.get('image_url', ''),
-                            "collection_cover_image": collection.get('cover_image_url', ''),
-                            "date_created": tour.get('date', '')[:10] if tour.get('date') else '',
-                            "sport_type": tour.get('sport', '')
-                        }
-                        
-                        # Add calculated fields
-                        if tour.get('elevation_up') and distance_km:
-                            try:
-                                # Calculate meters climbed per kilometer
-                                meters_per_km = float(tour['elevation_up']) / float(distance_km)
-                                csv_tour["climbing_intensity"] = f"{meters_per_km:.1f}"
-                            except:
-                                csv_tour["climbing_intensity"] = ""
-                        else:
-                            csv_tour["climbing_intensity"] = ""
-                                
-                        csv_tours.append(csv_tour)
-                    
-                    # Define fields to include in the CSV - only include fields that have data
-                    mandatory_fields = ["id", "timestamp", "name", "distance_km", "distance_mi", "duration"]
-                    optional_fields = [
-                        "unpaved_percentage", "singletrack_percentage", "rideable_percentage", 
-                        "total_ascent", "total_descent", "high_point", "climbing_intensity",
-                        "country", "region", "collection_name", "collection_id", 
-                        "sport_type", "description", "url", "gpx_url", "image_url", 
-                        "collection_cover_image", "date_created"
-                    ]
-                    
-                    # Filter out empty optional fields
-                    has_data = {field: any(tour.get(field) for tour in csv_tours) for field in optional_fields}
-                    fieldnames = mandatory_fields + [field for field in optional_fields if has_data[field]]
-                    
-                    # Write the CSV file
-                    with open(csv_path, 'w', encoding='utf-8', newline='') as f:
-                        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
+                    with open(csv_path, 'w', encoding='utf-8', newline='') as csvfile:
+                        writer = csv.DictWriter(csvfile, fieldnames=fields, extrasaction='ignore')
                         writer.writeheader()
-                        writer.writerows(csv_tours)
-                    
-                    # Update the collection with deduplicated tours
-                    collection['tours'] = deduplicated_tours
-                    collection['tours_count'] = len(deduplicated_tours)
+                        for tour in collection['tours']:
+                            # Make sure all fields are present even if empty
+                            row = {field: tour.get(field, '') for field in fields}
+                            writer.writerow(row)
             
-            # Generate Jekyll _config.yml file from collections
-            self.generate_jekyll_config(enhanced_collections)
+            # Create Jekyll _config.yml file
+            self.generate_jekyll_config(collections)
             
-            logger.info(f"Saved collection data to {self.output_dir}")
-            return True
+            # Create user index.html that redirects to their Komoot profile
+            if self.user_id:
+                create_user_index_html(self.user_id, None)
+            
+            return {
+                'output_dir': self.output_dir,
+                'files': {
+                    'json': str(json_path),
+                    'timestamped_json': str(timestamped_json_path)
+                }
+            }
             
         except Exception as e:
             logger.error(f"Error saving collections data: {str(e)}")
-            return False
+            raise Exception(f"Failed to save collections data: {str(e)}")
     
     def generate_jekyll_config(self, collections):
-        """Generate Jekyll _config.yml file from collections data."""
+        """
+        Generate Jekyll _config.yml file from collections data.
+        
+        Args:
+            collections: List of collection objects to use for Jekyll configuration
+            
+        Returns:
+            str: Path to the generated config file or None on failure
+            
+        This creates a Jekyll-compatible configuration file that allows collections 
+        to be used directly in a static site.
+        """
         try:
-            # Check if we have collections to process
-            if not collections:
-                logger.warning("No collections available to generate Jekyll config")
-                return False
-                
-            # Create the output directory if it doesn't exist
-            os.makedirs(self.output_dir, exist_ok=True)
+            # Create Jekyll config file
+            config_path = Path(self.output_dir) / '_config.yml'
             
-            # Path to the template _config.yml
-            template_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'templates', '_config.yml')
-            
-            # Check if template exists
-            config_content = ""
-            if os.path.exists(template_path):
-                # Read the template file
-                with open(template_path, 'r', encoding='utf-8') as f:
-                    config_content = f.read()
-            else:
-                # Create a basic template if none exists
-                config_content = """# Site settings
-title:          komoot-local
-description:    "Your local komoot"
-baseurl:        ""
-url:            "https://example.com"
-
-# Author
-author:
-  name:         "Komoot User"
-  email:        "user@example.com"
-
-# Build settings
-markdown:       kramdown
-include:
-  - _pages
-
-# Assets
-sass:
-  sass_dir:     _sass
-  style:        compressed
-
-# Gems
-plugins:
-  - jekyll-feed
-  - jekyll-leaflet
-  - jekyll-gpx-converter
-  - jekyll-paginate
-
-# Permalinks
-permalink:      /:year-:month-:day/:title
-paginate:       5
-
-# GPX Collections with metadata for display on homepage
-collections:
-"""
-            
-            # Find or create collections section
-            collections_section_index = config_content.find("collections:")
-            if collections_section_index == -1:
-                # If collections section doesn't exist, add it
-                config_content += "\n# GPX Collections with metadata for display on homepage\ncollections:\n"
-                collections_section_index = config_content.find("collections:")
-            
-            # Get everything up to collections section
-            config_prefix = config_content[:collections_section_index + len("collections:")]
-            
-            # Find defaults section
-            defaults_section_index = config_content.find("defaults:")
-            
-            # Create new collections configuration
-            new_collections_config = "\n"
-            display_order = 1
-            collection_slugs = []
-            
-            # Add each collection
+            # Prepare collections data for Jekyll
+            collections_data = []
             for collection in collections:
-                # Skip collections without tours
-                if not collection.get('tours'):
+                if 'id' not in collection or 'name' not in collection:
                     continue
                 
-                # Use the slug from the collection if available (preferred method)
-                if 'slug' in collection and collection['slug']:
-                    collection_slug = collection['slug']
-                else:
-                    # Fall back to generating a slug from the collection name
-                    collection_name = collection.get('name', f"Collection_{collection.get('id', '')}")
-                    collection_slug = re.sub(r'[^a-z0-9_-]', '-', collection_name.lower().strip())
-                    collection_slug = re.sub(r'-+', '-', collection_slug)  # Normalize multiple hyphens
-                    collection_slug = collection_slug.strip('-')  # Remove leading/trailing hyphens
+                slug = get_collection_slug(collection.get('url', ''), collection.get('name', ''))
                 
-                # For Jekyll, convert dashes to underscores (Jekyll collection names can't have dashes)
-                jekyll_collection_id = re.sub(r'-', '_', collection_slug)
-                
-                # Make sure slug is unique
-                base_slug = jekyll_collection_id
-                counter = 1
-                while jekyll_collection_id in collection_slugs:
-                    jekyll_collection_id = f"{base_slug}_{counter}"
-                    counter += 1
-                
-                collection_slugs.append(jekyll_collection_id)
-                
-                # Add collection to config with dashes in the permalink (okay in URLs)
-                new_collections_config += f"  {jekyll_collection_id}:\n"
-                new_collections_config += f"    output: true\n"
-                new_collections_config += f"    permalink: /{collection_slug}/:title/\n"
-                new_collections_config += f"    title: \"{collection.get('name', 'Unnamed Collection')}\"\n"
+                # Create collection data
+                coll_data = {
+                    'name': collection['name'],
+                    'id': collection['id'],
+                    'slug': slug,
+                    'output': True
+                }
                 
                 # Add description if available
-                if collection.get('description'):
-                    # Sanitize description by escaping quotes and removing newlines
-                    description = collection['description'].replace('"', '\\"').replace('\n', ' ')
-                    if len(description) > 200:
-                        description = description[:197] + '...'
-                    new_collections_config += f"    description: \"{description}\"\n"
-                else:
-                    new_collections_config += f"    description: \"Komoot collection\"\n"
-                    
-                new_collections_config += f"    display_order: {display_order}\n"
+                if 'description' in collection and collection['description']:
+                    coll_data['description'] = collection['description']
                 
-                if 'creator' in collection and 'display_name' in collection['creator']:
-                    new_collections_config += f"    creator: \"{collection['creator']['display_name']}\"\n"
-                
-                if 'cover_image_url' in collection:
-                    new_collections_config += f"    cover_image: \"{collection['cover_image_url']}\"\n"
-                
-                if 'url' in collection:
-                    new_collections_config += f"    komoot_url: \"{collection['url']}\"\n"
-                
-                # Add some stats if available
-                if 'tours_count' in collection:
-                    new_collections_config += f"    tours_count: {collection['tours_count']}\n"
-                    
-                display_order += 1
+                collections_data.append(coll_data)
             
-            # Create new defaults section for collections
-            new_defaults_config = "\n# Add these defaults to help with GPX file handling\ndefaults:\n"
-            for jekyll_collection_id in collection_slugs:
-                new_defaults_config += f"  - scope:\n"
-                new_defaults_config += f"      path: \"_{jekyll_collection_id}\"\n"
-                new_defaults_config += f"      type: \"{jekyll_collection_id}\"\n"
-                new_defaults_config += f"    values:\n"
-                new_defaults_config += f"      layout: \"gpx\"\n"
-            
-            # Add default for pages
-            new_defaults_config += f"  # Default for collection pages\n"
-            new_defaults_config += f"  - scope:\n"
-            new_defaults_config += f"      path: \"\"\n"
-            new_defaults_config += f"      type: \"pages\"\n"
-            new_defaults_config += f"    values:\n"
-            new_defaults_config += f"      layout: \"default\"\n"
-            
-            # Combine all sections
-            if defaults_section_index != -1:
-                # Use content up to defaults section, then add our new sections
-                config_content = config_prefix + new_collections_config + new_defaults_config
-            else:
-                # No defaults section, just append our new content
-                config_content = config_prefix + new_collections_config + new_defaults_config
-            
-            # Write the new config file
-            config_path = os.path.join(self.output_dir, '_config.yml')
+            # Write config file
             with open(config_path, 'w', encoding='utf-8') as f:
-                f.write(config_content)
+                f.write("# Jekyll configuration for Komoot collections\n")
+                f.write("title: Komoot Collections\n")
+                f.write("description: Exported Komoot collections\n\n")
+                
+                f.write("# Collections configuration\n")
+                f.write("collections:\n")
+                for coll in collections_data:
+                    f.write(f"  {coll['slug']}:\n")
+                    f.write(f"    output: true\n")
+                    f.write(f"    name: {coll['name']}\n")
+                    if 'description' in coll:
+                        f.write(f"    description: {coll['description']}\n")
+                
+                f.write("\n# Defaults\n")
+                f.write("defaults:\n")
+                f.write("  - scope:\n")
+                f.write("      path: \"\"\n")
+                f.write("    values:\n")
+                f.write("      layout: default\n")
+                
+                for coll in collections_data:
+                    f.write(f"  - scope:\n")
+                    f.write(f"      path: \"\"\n")
+                    f.write(f"      type: {coll['slug']}\n")
+                    f.write(f"    values:\n")
+                    f.write(f"      layout: collection\n")
             
-            logger.info(f"Generated Jekyll _config.yml with {len(collection_slugs)} collections at {config_path}")
-            return True
+            logger.info(f"Generated Jekyll config at {config_path}")
+            return str(config_path)
             
         except Exception as e:
             logger.error(f"Error generating Jekyll config: {str(e)}")
-            return False
+            return None
+
+
+def create_user_index_html(user_id, user_name=None):
+    """
+    Create an index.html file that redirects to the user's Komoot profile
+    
+    Args:
+        user_id: The Komoot user ID to link to
+        user_name: Optional display name of the user
+        
+    Returns:
+        str: Path to the created index.html file or None on failure
+    """
+    try:
+        # Get collection directory
+        output_dir = Path(get_default_output_dir('collections'))
+        user_dir = output_dir / f"user-{user_id}"
+        
+        # Ensure the directory exists
+        user_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create the HTML file
+        index_path = user_dir / 'index.html'
+        
+        with open(index_path, 'w', encoding='utf-8') as f:
+            f.write("<!DOCTYPE html>\n")
+            f.write("<html>\n")
+            f.write("<head>\n")
+            f.write(f"  <title>Komoot User Profile - {user_name or user_id}</title>\n")
+            f.write("  <meta http-equiv=\"refresh\" content=\"0; URL=https://www.komoot.com/user/" + user_id + "\" />\n")
+            f.write("</head>\n")
+            f.write("<body>\n")
+            f.write(f"  <p>Redirecting to <a href=\"https://www.komoot.com/user/{user_id}\">Komoot profile for {user_name or user_id}</a>...</p>\n")
+            f.write("</body>\n")
+            f.write("</html>\n")
+        
+        logger.info(f"Created user index.html at {index_path}")
+        return str(index_path)
+        
+    except Exception as e:
+        logger.error(f"Error creating user index.html: {str(e)}")
+        return None
+
 
 # Create instance of CollectionManager
 collections_manager = CollectionManager()
 
-def download_tour_using_gpx_api(tour_id):
-    """Download tour directly from Komoot's GPX API"""
-    gpx_url = f"https://www.komoot.com/api/v007/tours/{tour_id}/gpx"
-    response = requests.get(gpx_url)
-    if (response.status_code != 200):
-        raise Exception(f"Failed to download tour from GPX API: HTTP {response.status_code}")
-    return response.content
+# Import tours module functions that collections module needs
+from tours import extract_tours_from_html, fetch_all_tours_from_collection
 
-def download_tour_using_komootgpx(tour_id, email=None, password=None, output_dir=None, 
-                                 include_poi=True, max_desc_length=-1, max_title_length=-1, add_date=True):
-    """Download a tour using the KomootGPX library"""
-    try:
-        import shutil
-        from pathlib import Path
+# Initialize tours module
+import tours
+tours.logger = logger
+tours.KOMOOTGPX_AVAILABLE = KOMOOTGPX_AVAILABLE
+tours.BS4_AVAILABLE = BS4_AVAILABLE
+tours.BeautifulSoup = BeautifulSoup if BS4_AVAILABLE else None
+tours.processing_status = processing_status
+tours.processing_lock = processing_lock
+tours.add_log_entry = add_log_entry
+tours.reset_status = reset_status
+tours.get_default_output_dir = get_default_output_dir
+tours.sanitize_filename = sanitize_filename
+tours.make_request_with_retry = make_request_with_retry
+tours.extract_collection_id_from_url = extract_collection_id_from_url
 
-        if not KOMOOTGPX_AVAILABLE:
-            return None
-            
-        # Create output directory if needed
-        if output_dir:
-            os.makedirs(output_dir, exist_ok=True)
-        else:
-            # Default to selected folder if no output_dir is specified
-            output_dir = get_selected_folder()
-            
-        # Build arguments for KomootGPX command
-        args = ["komootgpx"]
-        
-        # Add authentication if provided
-        if email and password:
-            args.extend(["-m", email, "-p", password])
-        else:
-            args.append("-n")  # Anonymous mode
-            
-        # Add tour ID
-        args.extend(["-d", str(tour_id)])
-        
-        # Use the specified output directory directly
-        args.extend(["-o", output_dir])
-        
-        # Add POI option
-        if not include_poi:
-            args.append("-e")
-            
-        # Add description length
-        if max_desc_length >= 0:
-            args.extend(["--max-desc-length", str(max_desc_length)])
-            
-        # Add title length
-        if max_title_length >= 0:
-            args.extend(["--max-title-length", str(max_title_length)])
-            
-        # Add date option
-        if add_date:
-            args.append("-D")
-            
-        # First, check if there are existing files with this tour ID to identify potential output
-        # This helps us detect what filename pattern KomootGPX will use
-        existing_files = list(Path(output_dir).glob(f"*{tour_id}*.gpx"))
-        existing_modification_times = {str(f): f.stat().st_mtime for f in existing_files}
-            
-        # Run KomootGPX command
-        logger.info(f"Running KomootGPX with args: {args}")
-        result = subprocess.run(args, capture_output=True, text=True)
-        
-        # Check result
-        if result.returncode != 0:
-            logger.error(f"KomootGPX failed: {result.stderr}")
-            return None
-            
-        # Try to find the generated file by comparing before and after the command ran
-        new_files = list(Path(output_dir).glob(f"*{tour_id}*.gpx"))
-        new_modification_times = {str(f): f.stat().st_mtime for f in new_files}
-        
-        # Find added or updated files
-        created_files = []
-        for file_path, mod_time in new_modification_times.items():
-            if file_path not in existing_modification_times or mod_time > existing_modification_times.get(file_path, 0):
-                created_files.append(file_path)
-        
-        if created_files:
-            # Use the first created/updated file
-            full_path = created_files[0]
-            logger.info(f"Detected new GPX file: {full_path}")
-        else:
-            # Fall back to extracting the path from command output
-            output = result.stdout
-            # Try different patterns to extract the filename
-            patterns = [
-                r"GPX file written to ['\"](.+?)['\"]",  # With quotes
-                r"GPX file written to (.+?)$",  # Without quotes, end of line
-                r"GPX file written to (.+?)[\r\n]"  # Without quotes, newline
-            ]
-            
-            full_path = None
-            for pattern in patterns:
-                match = re.search(pattern, output, re.MULTILINE)
-                if match:
-                    full_path = match.group(1).strip()
-                    break
-                    
-            if not full_path:
-                # If we can't extract from the output, try to find the most recently created GPX file
-                logger.warning("Could not extract GPX filename from KomootGPX output, looking for most recent file")
-                gpx_files = list(Path(output_dir).glob(f"*{tour_id}*.gpx"))
-                if gpx_files:
-                    # Sort by creation time, most recent first
-                    gpx_files.sort(key=lambda x: x.stat().st_ctime, reverse=True)
-                    full_path = str(gpx_files[0])
-                    logger.info(f"Found most recent GPX file: {full_path}")
-                else:
-                    logger.error("Could not find any GPX files matching the tour ID")
-                    return None
-        
-        logger.info(f"KomootGPX created file at: {full_path}")
-        
-        # Return just the filename (not the full path)
-        filename = os.path.basename(full_path)
-        return filename
-            
-    except Exception as e:
-        logger.error(f"Error using KomootGPX: {str(e)}")
-        return None
+# Import the collections module using a direct import from the current directory
+# to avoid collision with the built-in collections module
+import sys, os
+import importlib.util
 
-def extract_tours_from_html(html_content, status_dict):
-    """
-    Extract all tours from a collection page HTML content
-    
-    This function is enhanced to handle different page layouts and tour card formats
-    in Komoot collection pages.
-    """
-    try:
-        if not BS4_AVAILABLE:
-            add_log_entry("BeautifulSoup4 is required for HTML parsing but not installed", status_dict)
-            return []
-        
-        soup = BeautifulSoup(html_content, 'html.parser')
-        tours = []
-        
-        # Track seen tour IDs to prevent duplicates
-        seen_tour_ids = set()
-        
-        # Find all cards with the modern layout first - this seems most reliable
-        modern_cards = soup.select('[data-test="tour-item"]')
-        
-        if modern_cards:
-            add_log_entry(f"Found {len(modern_cards)} cards with modern layout", status_dict)
-        
-        # Also try older/alternative layouts
-        tour_card_selectors = [
-            "div.tour-card", 
-            ".collection-tour-card",
-            "a[href*='/tour/']",
-            ".tw-mb-8",  # Newer Komoot layout
-            "div[role='listitem']",  # New Komoot UI role attribute for tour items
-            ".css-1qyi8eq",  # Another potential class in newer layouts
-            "li.tw-flex"  # Tour list items in some layouts
-        ]
-        
-        # Try each selector and collect all possible tour cards
-        all_cards = modern_cards.copy() if modern_cards else []
-        
-        for selector in tour_card_selectors:
-            cards = soup.select(selector)
-            if cards:
-                # Add only cards we haven't already found
-                for card in cards:
-                    if card not in all_cards:
-                        all_cards.append(card)
-                add_log_entry(f"Found {len(cards)} elements with selector '{selector}'", status_dict)
-        
-        # Process each potential tour card
-        for card in all_cards:
-            try:
-                # Try to extract tour ID first to filter duplicates
-                tour_id = None
-                
-                # Check if the card itself is a link to a tour
-                if card.name == 'a' and '/tour/' in card.get('href', ''):
-                    match = re.search(r'/tour/(\d+)', card.get('href', ''))
-                    if match:
-                        tour_id = match.group(1)
-                
-                # If not, look for tour links within the card
-                if not tour_id:
-                    tour_links = card.select("a[href*='/tour/']")
-                    for link in tour_links:
-                        match = re.search(r'/tour/(\d+)', link.get('href', ''))
-                        if match:
-                            tour_id = match.group(1)
-                            break
-                
-                # Skip if no ID found or already processed this tour
-                if not tour_id or tour_id in seen_tour_ids:
-                    continue
-                
-                seen_tour_ids.add(tour_id)
-                
-                # Create basic tour object
-                tour = {'id': tour_id}
-                
-                # Get tour URL
-                tour_url = f"https://www.komoot.com/tour/{tour_id}"
-                tour['url'] = tour_url
-                
-                # Default name
-                tour_name = f"Tour {tour_id}"
-                
-                # Try multiple strategies to find the title
-                
-                # Strategy 1: Find element with data-test-id="tour_title" inside this card 
-                # (this is the most reliable selector for modern Komoot)
-                title_elem = card.select_one('[data-test-id="tour_title"]')
-                
-                # Strategy 2: Also check for hyphenated version
-                if not title_elem:
-                    title_elem = card.select_one('[data-test-id="tour-title"]')
-                
-                # Strategy 3: Look for h3 elements inside anchor tags that link to the tour
-                if not title_elem:
-                    tour_link = card.select_one(f"a[href*='/tour/{tour_id}']")
-                    if tour_link:
-                        title_elem = tour_link.find('h3')
-                
-                # Strategy 4: Look for any heading elements
-                if not title_elem:
-                    for heading in ['h3', 'h2', 'h4']:
-                        heading_elem = card.find(heading)
-                        if heading_elem:
-                            title_elem = heading_elem
-                            break
-                
-                # Strategy 5: Look for elements with title-like classes
-                if not title_elem:
-                    title_classes = [
-                        '.tw-font-bold',
-                        '.tour-card__title',
-                        '.tw-text-xl',
-                        '.tw-text-2xl'
-                    ]
-                    for cls in title_classes:
-                        cls_elem = card.select_one(cls)
-                        if cls_elem:
-                            title_elem = cls_elem
-                            break
-                
-                # If we found a title element, extract the text
-                if title_elem:
-                    title_text = title_elem.get_text(strip=True)
-                    if title_text:
-                        tour_name = title_text
-                
-                tour['name'] = tour_name
-                
-                # Extract date if available
-                date_selectors = [
-                    "time.tour-card__date", 
-                    "time[datetime]", 
-                    ".tour-date",
-                    "time",  # Generic time element
-                    ".tw-text-gray-500"  # Often contains date in gray text
-                ]
-                for selector in date_selectors:
-                    date_elem = card.select_one(selector)
-                    if date_elem and 'datetime' in date_elem.attrs:
-                        tour['date'] = date_elem['datetime']
-                        break
-                    elif date_elem:
-                        # Try to extract date from text content - look for date patterns
-                        date_text = date_elem.get_text(strip=True)
-                        date_match = re.search(r'\d{1,2}[./-]\d{1,2}[./-]\d{2,4}', date_text)
-                        if date_match:
-                            tour['date_text'] = date_match.group(0)
-                            break
-                
-                # Extract stats using multiple approaches
-                # Look for stats elements with various selectors
-                stats_selectors = [
-                    ".tour-stats__value",
-                    ".tour-card__distance",
-                    ".tour-card__duration",
-                    ".tour-card-stat",
-                    ".tw-text-sm",  # Often contains stats in newer layouts
-                    "span.tour-stats__stat-text",
-                    "div.tour-card__stats-section span",
-                    ".tw-inline-flex",  # Stats in flex containers
-                    ".tw-font-normal"  # Normal weight text often contains stats
-                ]
-                
-                for selector in stats_selectors:
-                    stat_elems = card.select(selector)
-                    for elem in stat_elems:
-                        text = elem.get_text(strip=True).lower()
-                        
-                        # Extract distance
-                        if ('km' in text or 'mi' in text) and 'distance_km' not in tour:
-                            distance_match = re.search(r'([\d.,]+)', text)
-                            if distance_match:
-                                try:
-                                    distance_km = float(distance_match.group(1).replace(',', '.'))
-                                    tour['distance_km'] = distance_km
-                                except:
-                                    pass
-                        
-                        # Extract duration
-                        elif ('h' in text or 'hr' in text or 'min' in text) and 'duration' not in tour:
-                            hours = 0
-                            minutes = 0
-                            
-                            h_match = re.search(r'(\d+)\s*h', text)
-                            min_match = re.search(r'(\d+)\s*min', text)
-                            
-                            if h_match:
-                                hours = int(h_match.group(1))
-                            if min_match:
-                                minutes = int(min_match.group(1))
-                                
-                            if hours > 0 or minutes > 0:
-                                tour['duration'] = (hours * 3600) + (minutes * 60)  # Convert to seconds
-                        
-                        # Extract elevation
-                        elif '↑' in text and 'elevation_up' not in tour:
-                            elev_match = re.search(r'([\d.,]+)', text)
-                            if elev_match:
-                                try:
-                                    tour['elevation_up'] = int(elev_match.group(1).replace(',', '').replace('.', ''))
-                                except:
-                                    pass
-                        elif '↓' in text and 'elevation_down' not in tour:
-                            elev_match = re.search(r'([\d.,]+)', text)
-                            if elev_match:
-                                try:
-                                    tour['elevation_down'] = int(elev_match.group(1).replace(',', '').replace('.', ''))
-                                except:
-                                    pass
-                        # Extract high point
-                        elif ('high point' in text or 'highpoint' in text or 'max. height' in text) and 'high_point' not in tour:
-                            high_match = re.search(r'([\d.,]+)', text)
-                            if high_match:
-                                try:
-                                    tour['high_point'] = int(high_match.group(1).replace(',', '').replace('.', ''))
-                                except:
-                                    pass
-                
-                # Try to extract sport type
-                sport_selectors = [
-                    ".tour-card__sport-type",
-                    ".tour-type",
-                    ".collection-card__sport",
-                    "span.tw-capitalize",  # Sport types are often capitalized
-                    ".tw-rounded-full"  # Pills/badges often denote sport type
-                ]
-                
-                for selector in sport_selectors:
-                    sport_elems = card.select(selector)
-                    for elem in sport_elems:
-                        text = elem.get_text(strip=True).lower()
-                        if text:
-                            # Validate it's likely a sport type before adding
-                            sport_types = ['hike', 'bike', 'run', 'mountain', 'road', 'gravel', 'skiing', 'mountainbike', 
-                                          'trail', 'walk', 'touring', 'road cycling', 'jogging', 'nordic']
-                            for sport in sport_types:
-                                if sport in text:
-                                    tour['sport'] = text
-                                    break
-                            if 'sport' in tour:
-                                break
-                
-                # Try to extract surface info (unpaved, singletrack percentages)
-                surface_selectors = [
-                    ".tour-stats__surface",
-                    ".surface-stats",
-                    ".tw-text-xs"  # Often contains surface info in newer layouts
-                ]
+# Use absolute path to find the collections module
+collections_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'collections.py')
+collections_spec = importlib.util.spec_from_file_location("collections_module", collections_path)
+collections_module = importlib.util.module_from_spec(collections_spec)
+collections_spec.loader.exec_module(collections_module)
 
-                for selector in surface_selectors:
-                    surface_elems = card.select(selector)
-                    for elem in surface_elems:
-                        text = elem.get_text(strip=True).lower()
-                        
-                        # Look for unpaved percentage
-                        unpaved_match = re.search(r'(\d+)%\s*unpaved', text)
-                        if unpaved_match:
-                            tour['unpaved_percentage'] = unpaved_match.group(1)
-                            
-                        # Look for singletrack percentage
-                        singletrack_match = re.search(r'(\d+)%\s*singletrack', text)
-                        if singletrack_match:
-                            tour['singletrack_percentage'] = singletrack_match.group(1)
-                            
-                        # Look for rideable percentage
-                        rideable_match = re.search(r'(\d+)%\s*rideable', text)
-                        if rideable_match:
-                            tour['rideable_percentage'] = rideable_match.group(1)
-                
-                # Try to extract images
-                image_selectors = [
-                    "img.tour-card__image", 
-                    "img.lazyload", 
-                    "img.lazy",
-                    "img[src*='cdn-assets']",
-                    "img[src*='.jpeg']",
-                    "img[src*='.jpg']",
-                    "img[src*='.png']",
-                    "img[srcset]",  # Images with srcset attribute
-                    "img.tw-absolute",  # Cover images in newer layouts
-                    "img"  # Fallback to any image as last resort
-                ]
-                
-                for selector in image_selectors:
-                    img_elems = card.select(selector)
-                    for img in img_elems:
-                        # Skip small icons and logos
-                        if img.get('width') and int(img.get('width')) < 50:
-                            continue
-                        if img.get('height') and int(img.get('height')) < 50:
-                            continue
-                        
-                        # Try to get high quality image URL
-                        if img.get('src'):
-                            image_url = img['src']
-                            # Remove small thumbnails or resized versions
-                            # Try to find the original version by removing query parameters
-                            if '?' in image_url:
-                                image_url = image_url.split('?')[0]
-                            tour['image_url'] = image_url
-                            break
-                        elif img.get('data-src'):
-                            tour['image_url'] = img['data-src']
-                            break
-                        elif img.get('data-lazyload'):
-                            tour['image_url'] = img['data-lazyload']
-                            break
-                        elif img.get('srcset'):
-                            # Extract the largest image from srcset
-                            srcset = img['srcset']
-                            # Find the last URL in the srcset (typically the largest)
-                            srcset_parts = srcset.split(',')
-                            if srcset_parts:
-                                last_part = srcset_parts[-1]
-                                url_match = re.search(r'(https?://[^\s]+)', last_part)
-                                if url_match:
-                                    tour['image_url'] = url_match.group(1)
-                                    break
-                
-                # Try to extract user/author
-                creator_selectors = [
-                    ".tour-creator",
-                    "a[href*='/user/']",
-                    ".tw-text-gray-600"  # Often contains creator name
-                ]
-                
-                for selector in creator_selectors:
-                    creator_elem = card.select_one(selector)
-                    if creator_elem:
-                        creator_text = creator_elem.get_text(strip=True)
-                        if creator_text and len(creator_text) < 50:  # Reasonable name length
-                            tour['creator_name'] = creator_text
-                            # Extract user ID from href if available
-                            if creator_elem.name == 'a' and '/user/' in creator_elem.get('href', ''):
-                                user_match = re.search(r'/user/([^/]+)', creator_elem['href'])
-                                if user_match:
-                                    tour['creator_id'] = user_match.group(1)
-                            break
-                
-                # Try to extract country/region
-                region_selectors = [
-                    ".tour-card__region",
-                    ".tour-location",
-                    ".tw-text-gray-500"  # Often contains location info
-                ]
-                
-                for selector in region_selectors:
-                    region_elem = card.select_one(selector)
-                    if region_elem:
-                        region_text = region_elem.get_text(strip=True)
-                        # Skip if it's just a date or has numbers (likely not a region)
-                        if (region_text and not re.search(r'\d', region_text) and 
-                            'ago' not in region_text.lower() and len(region_text) < 50):
-                            tour['region'] = region_text
-                            break
-                
-                # Add to results
-                tours.append(tour)
-                
-            except Exception as e:
-                add_log_entry(f"Error extracting tour from card: {str(e)}", status_dict)
-        
-        add_log_entry(f"Successfully extracted {len(tours)} unique tours from HTML content", status_dict)
-        return tours
-    
-    except Exception as e:
-        add_log_entry(f"Error parsing HTML content: {str(e)}", status_dict)
-        return []
+# Initialize collections module
+collections_module.logger = logger
+collections_module.collections_status = collections_status
+collections_module.collections_lock = collections_lock
+collections_module.processing_status = processing_status
+collections_module.processing_lock = processing_lock
+collections_module.BS4_AVAILABLE = BS4_AVAILABLE
+collections_module.BeautifulSoup = BeautifulSoup if BS4_AVAILABLE else None
+collections_module.collections_manager = collections_manager
+collections_module.add_log_entry = add_log_entry
+collections_module.reset_status = reset_status
+collections_module.extract_user_id_from_url = extract_user_id_from_url
+collections_module.extract_collection_id_from_url = extract_collection_id_from_url
+collections_module.make_request_with_retry = make_request_with_retry
+collections_module.get_default_output_dir = get_default_output_dir
+collections_module.get_collection_slug = get_collection_slug
+collections_module.sanitize_filename = sanitize_filename
+collections_module.extract_tours_from_html = extract_tours_from_html
+collections_module.fetch_all_tours_from_collection = fetch_all_tours_from_collection
 
-def fetch_all_tours_from_collection(adapter, collection_url, status_dict, max_workers=5):
-    """
-    Fetch all tours from a collection using systematic pagination with concurrency
-    
-    This function implements multiple strategies to retrieve all tours from
-    large collections, including standard pagination and page size parameters.
-    Uses a ThreadPoolExecutor for concurrent processing to improve speed.
-    """
-    try:
-        collection_id = extract_collection_id_from_url(collection_url)
-        if not collection_id:
-            add_log_entry(f"Could not extract collection ID from URL: {collection_url}", status_dict)
-            return None
-        
-        # First, get the collection details using the URL to get basic info
-        collection = adapter.fetch_collection_by_url(collection_url)
-        if not collection:
-            add_log_entry(f"Failed to fetch collection data from URL: {collection_url}", status_dict)
-            return None
-        
-        # Setup browser-like headers for requests
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Referer': 'https://www.komoot.com/',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Cache-Control': 'max-age=0'
-        }
-        
-        # Get the tours directly from the base page with retry
-        add_log_entry(f"Fetching collection page directly: {collection_url}", status_dict)
-        response = make_request_with_retry(collection_url, headers, max_retries=3)
-        
-        if response.status_code != 200:
-            add_log_entry(f"Failed to fetch collection page: HTTP {response.status_code}", status_dict)
-        else:
-            # Extract tours directly from the HTML
-            base_tours = extract_tours_from_html(response.text, status_dict)
-            if base_tours:
-                collection['tours'] = base_tours
-                collection['tours_count'] = len(base_tours)
-                add_log_entry(f"Found {len(base_tours)} tours from base collection page", status_dict)
-        
-        # Extract collection cover image URL
-        if response and response.status_code == 200:
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Extract collection metadata from the page
-            # Try to get collection title
-            title_elem = soup.select_one("h1.collection__title") or soup.select_one("h1")
-            if title_elem:
-                title_text = title_elem.get_text(strip=True)
-                collection['name'] = title_text
-            
-            # Try to get collection description
-            desc_elem = soup.select_one(".collection__description") or soup.select_one("p.tw-mt-2")
-            if desc_elem:
-                desc_text = desc_elem.get_text(strip=True)
-                collection['description'] = desc_text
-            
-            # Try to get creator name
-            creator_elem = soup.select_one(".collection__creator-name") or soup.select_one(".tw-text-sm a")
-            if creator_elem:
-                creator_name = creator_elem.get_text(strip=True)
-                if 'creator' not in collection:
-                    collection['creator'] = {}
-                collection['creator']['display_name'] = creator_name
-                
-            # Get cover image URL using multiple methods
-            cover_image_url = None
-            
-            # Method 1: Look for meta og:image tag
-            og_image = soup.select_one('meta[property="og:image"]')
-            if og_image and 'content' in og_image.attrs:
-                cover_image_url = og_image['content']
-                add_log_entry(f"Found cover image URL from og:image meta tag", status_dict)
-            
-            # Method 2: Look for collection cover image in the page
-            if not cover_image_url:
-                cover_selectors = [
-                    ".c-collection-cover__image img",
-                    ".css-1dhdnz7",  # Class used in the provided HTML
-                    "img[alt*='Collection']",
-                    "img[sizes*='1344px']"  # Large images are likely covers
-                ]
-                
-                for selector in cover_selectors:
-                    img_elem = soup.select_one(selector)
-                    if img_elem and 'src' in img_elem.attrs:
-                        cover_image_url = img_elem['src']
-                        add_log_entry(f"Found cover image URL using selector: {selector}", status_dict)
-                        break
-                    
-            # If found, add to collection
-            if cover_image_url:
-                collection['cover_image_url'] = cover_image_url
-                add_log_entry(f"Added cover image URL to collection", status_dict)
-        
-        # Try to get the total number of tours from collection page metadata
-        expected_count = 0
-        if 'expected_tours_count' in collection and collection['expected_tours_count']:
-            expected_count = collection['expected_tours_count']
-        else:
-            # Try to parse from HTML if available
-            if BS4_AVAILABLE and response and response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'html.parser')
-                
-                # Look for tour count in various locations
-                # First try the collection stats header that shows "XX routes"
-                count_text = None
-                routes_elem = soup.select_one('.tw-flex-none') or soup.select_one('.collection__stats')
-                if routes_elem:
-                    count_text = routes_elem.text.strip()
-                    count_match = re.search(r'(\d+)\s*routes', count_text)
-                    if count_match:
-                        expected_count = int(count_match.group(1))
-                        collection['expected_tours_count'] = expected_count
-                        add_log_entry(f"Extracted expected tour count from page header: {expected_count}", status_dict)
-                
-                # If not found, try other selectors for tour count
-                if not expected_count:
-                    count_selectors = [
-                        ".collection-header__stat-value", 
-                        ".collection-meta-data__data",
-                        ".tour-count",
-                        ".collection-meta-data__item"
-                    ]
-                    
-                    for selector in count_selectors:
-                        count_elems = soup.select(selector)
-                        for elem in count_elems:
-                            text = elem.text.strip()
-                            # Look for numbers that could be tour counts
-                            match = re.search(r'\b(\d+)\b', text)
-                            if match:
-                                potential_count = int(match.group(1))
-                                # If it's a reasonable number that's higher than what we have already
-                                if potential_count > len(collection.get('tours', [])) and potential_count < 1000:
-                                    expected_count = potential_count
-                                    collection['expected_tours_count'] = expected_count
-                                    add_log_entry(f"Extracted expected tour count: {expected_count}", status_dict)
-                                    break
-        
-        # Initialize tracking for all tours found
-        all_tour_ids = set(tour['id'] for tour in collection.get('tours', []))
-        all_tours = collection.get('tours', []).copy()
-        
-        # Count tours found in initial fetch
-        initial_tour_count = len(all_tours)
-        
-        # Adjust max_workers based on expected collection size
-        if expected_count > 100:
-            max_workers = min(8, (expected_count // 50) + 3)
-        
-        # If we need more tours, implement systematic pagination using concurrency
-        if expected_count > initial_tour_count or expected_count == 0:
-            add_log_entry(f"Need more tours: found {initial_tour_count}, expected {expected_count or 'unknown'}", status_dict)
-            
-            # Generate URLs to try different approaches
-            urls_to_try = []
-            
-            # Approach 1: Systematic pagination with ?page=N parameter
-            max_pages = 20  # Safety limit - most collections won't exceed this
-            for page in range(2, max_pages + 1):
-                page_url = f"{collection_url}?page={page}"
-                urls_to_try.append(('page', page_url))
-            
-            # Approach 2: Different page sizes
-            page_sizes = [50, 100, 200, 300, 500]
-            for page_size in page_sizes:
-                size_url = f"{collection_url}?size={page_size}"
-                urls_to_try.append(('size', size_url))
-            
-            # Use a thread pool to fetch pages concurrently
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # Define the function to process a URL
-                def process_url(url_tuple):
-                    url_type, url = url_tuple
-                    try:
-                        # Add a small delay to avoid rate limiting
-                        time.sleep(0.2)
-                        
-                        # Fetch the page with retry
-                        page_response = make_request_with_retry(url, headers, max_retries=2)
-                        
-                        if page_response.status_code == 200:
-                            # Extract tours from this page
-                            page_tours = extract_tours_from_html(page_response.text, status_dict)
-                            return url_type, url, page_tours
-                        else:
-                            add_log_entry(f"Failed to fetch {url_type} URL {url}: HTTP {page_response.status_code}", status_dict)
-                            return url_type, url, []
-                    except Exception as e:
-                        add_log_entry(f"Error processing {url_type} URL {url}: {str(e)}", status_dict)
-                        return url_type, url, []
-                
-                # Submit all URLs to the thread pool
-                future_to_url = {executor.submit(process_url, url_tuple): url_tuple for url_tuple in urls_to_try}
-                
-                # Process results as they complete
-                for future in concurrent.futures.as_completed(future_to_url):
-                    url_type, url, page_tours = future.result()
-                    
-                    # Add new tours to our collection
-                    new_tours_count = 0
-                    for tour in page_tours:
-                        if tour['id'] not in all_tour_ids:
-                            all_tour_ids.add(tour['id'])
-                            all_tours.append(tour)
-                            new_tours_count += 1
-                    
-                    if new_tours_count > 0:
-                        add_log_entry(f"Found {new_tours_count} new tours from {url_type} URL {url}, total now: {len(all_tours)}", status_dict)
-        
-        # Update collection with all found tours
-        collection['tours'] = all_tours
-        collection['tours_count'] = len(all_tours)
-        
-        # Log final count
-        add_log_entry(f"Total tours found for collection: {len(all_tours)}/{expected_count or '?'}", status_dict)
-        
-        return collection
-        
-    except Exception as e:
-        add_log_entry(f"Error fetching all tours from collection: {str(e)}", status_dict)
-        return None
-
+# Register routes
 @app.route('/')
 def index():
-    """Render the main application page"""
+    """Render the main HTML template"""
     return render_template('index.html')
 
+
 @app.route('/api/selected-folder', methods=['GET'])
-def get_selected_folder_api():
-    """API endpoint to get the selected folder"""
-    folder = get_selected_folder()
-    return jsonify({
-        'selected': bool(folder),
-        'path': folder
-    })
+def api_selected_folder():
+    """Get the currently selected download folder"""
+    return jsonify({'folder': get_selected_folder()})
+
 
 @app.route('/api/select-folder', methods=['POST'])
-def select_folder_api():
-    """API endpoint to set the selected folder"""
+def api_select_folder():
+    """Set the selected download folder"""
     data = request.json
-    if not data or 'path' not in data:
+    folder_path = data.get('folder')
+    
+    if not folder_path:
         return jsonify({'error': 'No folder path provided'}), 400
-    
-    path = data['path']
-    
-    # Validate the folder exists
-    if not os.path.exists(path):
-        try:
-            # Try to create it
-            os.makedirs(path, exist_ok=True)
-        except Exception as e:
-            return jsonify({'error': f'Could not create folder: {str(e)}'}), 400
-    
-    # Set the global folder
-    set_selected_folder(path)
-    
-    return jsonify({
-        'success': True,
-        'path': path,
-        'message': f'Selected folder: {path}'
-    })
-
-@app.route('/api/start', methods=['POST'])
-def start_processing():
-    """Start the processing based on provided parameters"""
+        
     try:
-        # Get parameters from request
-        data = request.json
-        if data is None:
-            return jsonify({'error': 'No JSON data received'}), 400
-            
-        # Extract parameters
-        anonymous = data.get('anonymous', False)
-        email = data.get('email')
-        password = data.get('password')
-        tour_selection = data.get('tourSelection', 'all')
-        filter_type = data.get('filterType', 'all')
-        no_poi = data.get('noPoi', False)
+        # Ensure the directory exists
+        os.makedirs(folder_path, exist_ok=True)
         
-        # Get output directory - either from the request or use default
-        output_dir = data.get('outputDir')
-        if not output_dir or output_dir.startswith('static/'):
-            # If no directory specified or using the old static path, use the default
-            output_dir = get_default_output_dir('gpx')
-        
-        skip_existing = data.get('skipExisting', True)
-        id_filename = data.get('idFilename', False)
-        add_date = data.get('addDate', True)
-        max_title_length = data.get('maxTitleLength', -1)
-        max_desc_length = data.get('maxDescLength', -1)
-        download_images = data.get('downloadImages', False)
-        
-        # Optional chunking parameters
-        chunk_size = data.get('chunkSize', 0)
-        chunk_start = data.get('chunkStart', 0)
-        
-        # Validate required fields
-        if not anonymous and (not email or not password):
-            return jsonify({'error': 'Email and password are required for non-anonymous mode'}), 400
-            
-        if anonymous and tour_selection == 'all':
-            return jsonify({'error': 'Cannot use "all tours" in anonymous mode'}), 400
-            
-        if tour_selection != 'all' and not tour_selection:
-            return jsonify({'error': 'Tour ID is required for single tour download'}), 400
-        
-        # Reset status 
-        with processing_lock:
-            reset_status(processing_status)
-        
-        # Log the output directory for debugging
-        add_log_entry(f"Output directory set to: {output_dir}", processing_status)
-        
-        # For single tour, try KomootGPX first if available
-        if tour_selection != 'all' and KOMOOTGPX_AVAILABLE:
-            with processing_lock:
-                processing_status['status'] = 'running'
-                processing_status['tours_found'] = 1
-                processing_status['progress'] = 0.1
-                
-            add_log_entry(f"Using KomootGPX to download tour {tour_selection}", processing_status)
-            
-            # Create output directory if needed
-            os.makedirs(output_dir, exist_ok=True)
-            
-            # Download the tour
-            filename = download_tour_using_komootgpx(
-                tour_id=tour_selection,
-                email=email if not anonymous else None,
-                password=password if not anonymous else None,
-                output_dir=output_dir,
-                include_poi=(not no_poi),
-                max_desc_length=max_desc_length,
-                max_title_length=max_title_length,
-                add_date=add_date
-            )
-            
-            if filename:
-                # Get additional tour info
-                adapter = KomootAdapter()
-                
-                # Login if needed
-                if not anonymous:
-                    add_log_entry(f"Logging in to get tour details", processing_status)
-                    adapter.login(email, password)
-                
-                # Try to get tour details
-                try:
-                    tour_data = adapter.fetch_tour(tour_selection, anonymous=anonymous)
-                except:
-                    tour_data = None
-                
-                # Download images if requested
-                image_paths = []
-                if download_images and tour_data:
-                    try:
-                        images_dir = os.path.join(output_dir, '../images')
-                        os.makedirs(images_dir, exist_ok=True)
-                        image_paths = adapter.download_tour_images(
-                            tour_id=tour_selection,
-                            tour=tour_data,
-                            output_dir=images_dir
-                        )
-                        add_log_entry(f"Downloaded {len(image_paths)} images for tour {tour_selection}", processing_status)
-                    except Exception as img_err:
-                        add_log_entry(f"Error downloading images: {str(img_err)}", processing_status)
-                
-                # Create result
-                result = {
-                    'id': tour_selection,
-                    'name': tour_data['name'] if tour_data else f"Tour {tour_selection}",
-                    'date': tour_data.get('date', '')[:10] if tour_data and tour_data.get('date') else '',
-                    'sport': tour_data.get('sport', 'unknown') if tour_data else 'unknown',
-                    'distance': tour_data.get('distance', 0) if tour_data else 0,
-                    'distance_km': round(tour_data.get('distance', 0) / 1000, 2) if tour_data else 0,
-                    'duration': round(tour_data.get('duration', 0) / 3600, 2) if tour_data else 0,
-                    'elevation_up': tour_data.get('elevation_up', 0) if tour_data else 0,
-                    'elevation_down': tour_data.get('elevation_down', 0) if tour_data else 0,
-                    'url': f"https://www.komoot.com/tour/{tour_selection}",
-                    'filename': filename,
-                    'images': image_paths,
-                    'output_dir': output_dir  # Include the output dir for user reference
-                }
-                
-                with processing_lock:
-                    processing_status['status'] = 'completed'
-                    processing_status['progress'] = 1.0
-                    processing_status['tours_completed'] = 1
-                    processing_status['results'] = [result]
-                
-                add_log_entry(f"Tour {tour_selection} downloaded successfully to {output_dir}", processing_status)
-                return jsonify({'success': True, 'message': 'Tour downloaded successfully'})
-            
-            add_log_entry(f"KomootGPX download failed, falling back to adapter", processing_status)
-        
-        # Start a background thread for processing using our adapter
-        threading.Thread(
-            target=process_tours,
-            args=(anonymous, email, password, tour_selection, filter_type, 
-                  no_poi, output_dir, skip_existing, id_filename, add_date,
-                  max_title_length, max_desc_length, download_images,
-                  chunk_size, chunk_start)
-        ).start()
-        
-        return jsonify({'success': True, 'message': 'Processing started'})
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/status', methods=['GET'])
-def get_status():
-    """Get the current processing status"""
-    with processing_lock:
-        return jsonify(processing_status)
-
-@app.route('/api/results', methods=['GET'])
-def get_results():
-    """Get the processing results"""
-    with processing_lock:
-        if not processing_status['results']:
-            return jsonify([]), 200  # Return empty array instead of error
-        return jsonify(processing_status['results'])
-
-@app.route('/api/clear', methods=['POST'])
-def clear_results():
-    """Clear the current results"""
-    with processing_lock:
-        processing_status['results'] = []
-    return jsonify({'success': True})
-
-@app.route('/api/download/<tour_id>', methods=['GET'])
-def download_tour(tour_id):
-    """Download a specific tour GPX file"""
-    try:
-        # Get parameters from query string
-        anonymous = request.args.get('anonymous', 'false').lower() == 'true'
-        email = request.args.get('email')
-        password = request.args.get('password')
-        no_poi = request.args.get('noPoi', 'false').lower() == 'true'
-        
-        # Create a temporary directory for the GPX
-        output_dir = get_default_output_dir('temp')
-        
-        # First try using KomootGPX if available
-        if KOMOOTGPX_AVAILABLE:
-            filename = download_tour_using_komootgpx(
-                tour_id=tour_id,
-                email=email if not anonymous else None,
-                password=password if not anonymous else None,
-                output_dir=output_dir,
-                include_poi=(not no_poi)
-            )
-            
-            if filename:
-                return send_from_directory(output_dir, filename, as_attachment=True)
-        
-        # If KomootGPX failed or not available, try direct GPX API for anonymous mode
-        if anonymous:
-            try:
-                gpx_content = download_tour_using_gpx_api(tour_id)
-                
-                # Save to file
-                filename = f"Tour_{tour_id}.gpx"
-                filepath = os.path.join(output_dir, filename)
-                
-                with open(filepath, 'wb') as f:
-                    f.write(gpx_content)
-                    
-                return send_from_directory(output_dir, filename, as_attachment=True)
-            except Exception as e:
-                logger.error(f"Error downloading with direct API: {str(e)}")
-        
-        # Fall back to using our adapter
-        adapter = KomootAdapter()
-        
-        # Login if not anonymous
-        if not anonymous:
-            if not email or not password:
-                return jsonify({'error': 'Email and password are required for non-anonymous mode'}), 400
-            adapter.login(email, password)
-        
-        # Generate the GPX
-        adapter.make_gpx(
-            tour_id=tour_id,
-            output_dir=output_dir,
-            include_poi=(not no_poi),
-            skip_existing=False,
-            tour_base=None,
-            add_date=True,
-            max_title_length=-1,
-            max_desc_length=-1,
-            return_content=False,
-            anonymous=anonymous
-        )
-        
-        # Get the filename from the adapter
-        filename = adapter.get_last_filename()
-        if not filename:
-            return jsonify({'error': 'Failed to generate GPX file'}), 500
-            
-        # Return the file
-        return send_from_directory(output_dir, filename, as_attachment=True)
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/export/images/<tour_id>', methods=['GET'])
-def export_images(tour_id):
-    """Export all images for a specific tour as individual files"""
-    try:
-        # Get base image directory
-        base_dir = get_default_output_dir('images')
-        
-        # Check if images directory exists for this tour
-        images_dir = os.path.join(base_dir, str(tour_id))
-        if not os.path.exists(images_dir):
-            return jsonify({'error': 'No images found for this tour'}), 404
-
-        # Get list of image files
-        image_files = []
-        for root, _, files in os.walk(images_dir):
-            for file in files:
-                file_path = os.path.join(root, file)
-                image_files.append({
-                    'path': file_path,
-                    'filename': os.path.basename(file_path)
-                })
-        
-        # Return the list of images
-        return jsonify({
-            'tour_id': tour_id,
-            'images': image_files
-        })
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/tour-counts', methods=['POST'])
-def get_tour_counts():
-    """Count the number of tours for a user"""
-    try:
-        data = request.json
-        if data is None:
-            return jsonify({'error': 'No JSON data received'}), 400
-            
-        email = data.get('email')
-        password = data.get('password')
-        filter_type = data.get('filterType', 'all')
-        
-        if not email or not password:
-            return jsonify({'error': 'Email and password are required'}), 400
-            
-        logger.info(f"Counting tours for user {email}, filter: {filter_type}")
-        
-        # Login to Komoot
-        logger.info("Logging in to Komoot...")
-        adapter = KomootAdapter()
-        adapter.login(email, password)
-        logger.info("Logged in successfully, fetching tours...")
-        
-        # Fetch tours
-        tours = adapter.fetch_tours(filter_type)
-        logger.info(f"Found {len(tours)} tours")
+        # Set as selected folder
+        set_selected_folder(folder_path)
         
         return jsonify({
             'success': True,
-            'total_tours': len(tours)
+            'folder': folder_path
         })
         
     except Exception as e:
-        logger.error(f"Error counting tours: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/collections/personal', methods=['POST'])
-def scrape_personal_collections():
-    """Start scraping personal collections"""
-    try:
-        data = request.json
-        if data is None:
-            return jsonify({'error': 'No JSON data received'}), 400
-            
-        email = data.get('email')
-        password = data.get('password')
-        
-        if not email or not password:
-            return jsonify({'error': 'Email and password are required'}), 400
-            
-        logger.info(f"Starting personal collections scraping for user {email}")
-        
-        # Reset collections status
-        with collections_lock:
-            reset_status(collections_status)
-        
-        # Start a background thread for scraping
-        threading.Thread(
-            target=scrape_collections_thread,
-            args=(email, password, 'personal')
-        ).start()
-        
-        return jsonify({'success': True, 'message': 'Personal collections scraping started'})
-        
-    except Exception as e:
-        logger.error(f"Error starting collection scraping: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+# Register tour routes
+tours.register_tour_routes(app)
 
-@app.route('/api/collections/saved', methods=['POST'])
-def scrape_saved_collections():
-    """Start scraping saved collections"""
-    try:
-        data = request.json
-        if data is None:
-            return jsonify({'error': 'No JSON data received'}), 400
-            
-        email = data.get('email')
-        password = data.get('password')
-        
-        if not email or not password:
-            return jsonify({'error': 'Email and password are required'}), 400
-            
-        logger.info(f"Starting saved collections scraping for user {email}")
-        
-        # Reset collections status
-        with collections_lock:
-            reset_status(collections_status)
-        
-        # Start a background thread for scraping
-        threading.Thread(
-            target=scrape_collections_thread,
-            args=(email, password, 'saved')
-        ).start()
-        
-        return jsonify({'success': True, 'message': 'Saved collections scraping started'})
-        
-    except Exception as e:
-        logger.error(f"Error starting collection scraping: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+# Register collection routes
+collections_module.register_collection_routes(app, {
+    'logger': logger,
+    'collections_status': collections_status,
+    'collections_lock': collections_lock,
+    'processing_status': processing_status,
+    'processing_lock': processing_lock,
+    'BS4_AVAILABLE': BS4_AVAILABLE,
+    'BeautifulSoup': BeautifulSoup if BS4_AVAILABLE else None,
+    'collections_manager': collections_manager,
+    'add_log_entry': add_log_entry,
+    'reset_status': reset_status,
+    'extract_user_id_from_url': extract_user_id_from_url,
+    'extract_collection_id_from_url': extract_collection_id_from_url,
+    'make_request_with_retry': make_request_with_retry,
+    'get_default_output_dir': get_default_output_dir,
+    'get_collection_slug': get_collection_slug,
+    'sanitize_filename': sanitize_filename
+})
 
-@app.route('/api/collections/public', methods=['POST'])
-def scrape_public_collections():
-    """Scrape public collections by URL without authentication"""
-    try:
-        # Get parameters from request
-        data = request.json
-        if data is None:
-            logger.error("No JSON data received in request")
-            return jsonify({'error': 'No JSON data received'}), 400
-            
-        collection_urls = data.get('urls', [])
-        
-        if not collection_urls:
-            return jsonify({'error': 'No collection URLs provided'}), 400
-            
-        logger.info(f"Starting public collections scraping for {len(collection_urls)} URLs")
-        
-        # Reset collections status
-        with collections_lock:
-            reset_status(collections_status)
-        
-        # Start a background thread for scraping
-        threading.Thread(
-            target=scrape_public_collections_thread,
-            args=(collection_urls,)
-        ).start()
-        
-        return jsonify({'success': True, 'message': 'Public collections scraping started'})
-        
-    except Exception as e:
-        logger.error(f"Error starting public collection scrape: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/collections-status', methods=['GET'])
-def get_collections_status():
-    """Get the current collections processing status"""
-    with collections_lock:
-        return jsonify(collections_status)
-
-@app.route('/api/collections-results', methods=['GET'])
-def get_collections_results():
-    """Get the collections processing results"""
-    with collections_lock:
-        if not collections_status['results']:
-            return jsonify([]), 200  # Return empty array instead of error
-        return jsonify(collections_status['results'])
-
-@app.route('/api/clear-collections', methods=['POST'])
-def clear_collections():
-    """Clear the current collections results"""
-    with collections_lock:
-        collections_status['results'] = []
-    return jsonify({'success': True})
-
-@app.route('/api/export/collections', methods=['GET'])
-def export_collections():
-    """Function is not used - collections export as ZIP is no longer supported"""
-    return jsonify({'error': 'Collections export as ZIP is no longer supported. Access individual files directly.'}), 404
-
-@app.route('/api/download-collection-tours', methods=['POST'])
-def download_collection_tours():
-    """Download all tours in a collection as GPX files"""
-    try:
-        # Get parameters from request
-        data = request.json
-        if not data:
-            return jsonify({'error': 'No data provided'}), 400
-            
-        collections = data.get('collections', [])
-        if not collections:
-            return jsonify({'error': 'No collections provided'}), 400
-            
-        # Use provided output directory or get default
-        output_dir = data.get('outputDir')
-        if not output_dir or output_dir.startswith('static/'):
-            output_dir = get_default_output_dir('collections')
-        
-        include_metadata = data.get('includeMetadata', True)
-        output_dir_structure = data.get('outputDirStructure', 'collection')
-        download_images = data.get('downloadImages', False)
-        
-        # Get user ID from request if available
-        user_id = data.get('userId')
-        
-        # If user_id is not in request, try to extract it from the first collection URL
-        if not user_id:
-            for collection in collections:
-                if 'url' in collection:
-                    extracted_id = extract_user_id_from_url(collection['url'])
-                    if extracted_id:
-                        user_id = extracted_id
-                        logger.info(f"Extracted user ID from collection URL: {user_id}")
-                        break
-        
-        # GPX options
-        gpx_options = data.get('gpxOptions', {})
-        
-        # Log details for debugging
-        logger.info(f"Starting collection tours download with user_id: {user_id}")
-        
-        # Reset status
-        with processing_lock:
-            reset_status(processing_status)
-            
-        # Start background thread
-        threading.Thread(
-            target=download_collection_tours_thread,
-            args=(collections, output_dir, include_metadata, output_dir_structure, download_images, gpx_options, user_id)
-        ).start()
-        
-        return jsonify({'success': True, 'message': 'Collection tours download started'})
-        
-    except Exception as e:
-        logger.error(f"Error starting collection tours download: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/api/export/collection/<collection_id>/csv', methods=['GET'])
-def export_collection_csv(collection_id):
-    """Export a specific collection as CSV"""
-    try:
-        # Find the collection in the results
-        collection = None
-        with collections_lock:
-            for coll in collections_status['results']:
-                if coll.get('id') == collection_id:
-                    collection = coll
-                    break
-        
-        if not collection:
-            return jsonify({'error': 'Collection not found'}), 404
-        
-        # Create a timestamp for the filename
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        # Create a name for the file based on collection name
-        collection_name = collection.get('name', 'Unknown')
-        safe_name = re.sub(r'[^\w\-]', '_', collection_name)
-        filename = f"komoot_collection_{safe_name}_{timestamp}.csv"
-        
-        # Create a CSV with tour data
-        # Define fields to include in the CSV - with bikepacking.com format in mind
-        fieldnames = [
-            "id", "timestamp", "name", "distance_km", "distance_mi", "duration",
-            "unpaved_percentage", "singletrack_percentage", "rideable_percentage",
-            "total_ascent", "total_descent", "high_point", "climbing_intensity",
-            "country", "region", "collection_name", "collection_id", 
-            "sport_type", "description", "url", "gpx_url", "image_url", 
-            "collection_cover_image", "date_created"
-        ]
-        
-        # Create a BytesIO object to store the CSV
-        csv_buffer = BytesIO()
-        
-        # Get the timestamp for all records
-        current_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Process tours
-        csv_tours = []
-        for tour in collection.get('tours', []):
-            # Create standardized tour object
-            distance_km = tour.get('distance_km', tour.get('distance', 0)/1000 if tour.get('distance', 0) else 0)
-            
-            csv_tour = {
-                "id": tour.get('id', ''),
-                "timestamp": current_timestamp,
-                "name": tour.get('name', f"Tour {tour.get('id', 'unknown')}"),
-                "distance_km": f"{distance_km:.1f}" if distance_km else "",
-                "distance_mi": f"{distance_km * 0.621371:.1f}" if distance_km else "",
-                "duration": f"{tour.get('duration_hours', tour.get('duration', 0)/3600):.1f}" if tour.get('duration', 0) else "",
-                "unpaved_percentage": tour.get('unpaved_percentage', ''),
-                "singletrack_percentage": tour.get('singletrack_percentage', ''),
-                "rideable_percentage": tour.get('rideable_percentage', ''),
-                "total_ascent": tour.get('elevation_up', ''),
-                "total_descent": tour.get('elevation_down', ''),
-                "high_point": tour.get('high_point', ''),
-                "country": tour.get('country', ''),
-                "region": collection.get('region', ''),
-                "collection_name": collection.get('name', ''),
-                "collection_id": collection.get('id', ''),
-                "sport_type": tour.get('sport', ''),
-                "description": tour.get('description', ''),
-                "url": tour.get('url', f"https://www.komoot.com/tour/{tour.get('id', '')}"),
-                "gpx_url": tour.get('gpx_url', ''),
-                "image_url": tour.get('image_url', ''),
-                "collection_cover_image": collection.get('cover_image_url', ''),
-                "date_created": tour.get('date', '')[:10] if tour.get('date') else ''
-            }
-            
-            # Add calculated fields
-            if tour.get('elevation_up') and distance_km:
-                try:
-                    # Calculate meters climbed per kilometer
-                    meters_per_km = float(tour['elevation_up']) / float(distance_km)
-                    csv_tour["climbing_intensity"] = f"{meters_per_km:.1f}"
-                except:
-                    csv_tour["climbing_intensity"] = ""
-            else:
-                csv_tour["climbing_intensity"] = ""
-                    
-            csv_tours.append(csv_tour)
-        
-        # Write the CSV file - only include fields that have data
-        if csv_tours:
-            # Only include fields that have data
-            used_fields = set()
-            for tour in csv_tours:
-                for field, value in tour.items():
-                    if value:
-                        used_fields.add(field)
-            
-            # Filter fieldnames to only include fields that have data
-            filtered_fieldnames = [f for f in fieldnames if f in used_fields or f in ('id', 'name', 'url')]
-            
-            with csv.DictWriter(csv_buffer, fieldnames=filtered_fieldnames, extrasaction='ignore') as writer:
-                writer.writeheader()
-                writer.writerows(csv_tours)
-        
-        # Reset file pointer to beginning
-        csv_buffer.seek(0)
-        
-        # Return the CSV file
-        return send_file(
-            csv_buffer,
-            mimetype='text/csv',
-            as_attachment=True,
-            download_name=filename
-        )
-        
-    except Exception as e:
-        logger.error(f"Error exporting collection as CSV: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-def process_tours(anonymous, email, password, tour_selection, filter_type, 
-                 no_poi, output_dir, skip_existing, id_filename, add_date,
-                 max_title_length, max_desc_length, download_images,
-                 chunk_size, chunk_start):
-    """Process tours in a background thread"""
-    try:
-        with processing_lock:
-            processing_status['status'] = 'running'
-            
-        # Create a Komoot adapter
-        adapter = KomootAdapter()
-        
-        # Login to Komoot if not anonymous
-        if not anonymous:
-            add_log_entry(f"Logging in to Komoot as {email}...", processing_status)
-            adapter.login(email, password)
-            add_log_entry(f"Logged in as {adapter.get_display_name()}", processing_status)
-            
-            # Get user ID for folder organization
-            user_id = adapter.get_user_id()
-        else:
-            user_id = "anonymous"
-            
-        # Set up hierarchical directory structure
-        base_dir = get_selected_folder()
-        tours_dir = os.path.join(base_dir, 'tours')
-        user_dir = os.path.join(tours_dir, f"user-{user_id}")
-        recorded_dir = os.path.join(user_dir, 'recorded_tours')
-        planned_dir = os.path.join(user_dir, 'planned_tours')
-        
-        # Create base directories
-        os.makedirs(tours_dir, exist_ok=True)
-        os.makedirs(user_dir, exist_ok=True)
-        os.makedirs(recorded_dir, exist_ok=True)
-        os.makedirs(planned_dir, exist_ok=True)
-        
-        # Log directory structure
-        add_log_entry(f"Created hierarchical directory structure:", processing_status)
-        add_log_entry(f"- Base directory: {base_dir}", processing_status)
-        add_log_entry(f"- Tours directory: {tours_dir}", processing_status)
-        add_log_entry(f"- User directory: {user_dir}", processing_status)
-        add_log_entry(f"- Recorded tours directory: {recorded_dir}", processing_status)
-        add_log_entry(f"- Planned tours directory: {planned_dir}", processing_status)
-        
-        # If output directory is still the provided one, use hierarchical structure
-        if output_dir == get_default_output_dir('gpx'):
-            # Use our new hierarchical structure
-            add_log_entry(f"Using hierarchical directory structure for exports", processing_status)
-            use_hierarchical = True
-        else:
-            # User specified a custom directory, respect that
-            add_log_entry(f"Using custom output directory: {output_dir}", processing_status)
-            use_hierarchical = False
-            
-        # Process based on tour selection
-        if tour_selection == 'all':
-            # Fetch all tours
-            add_log_entry(f"Fetching all {filter_type} tours...", processing_status)
-            tours = adapter.fetch_tours(filter_type)
-            
-            # Update status with tour count
-            with processing_lock:
-                processing_status['tours_found'] = len(tours)
-                
-            add_log_entry(f"Found {len(tours)} tours", processing_status)
-            
-            # If chunking is enabled, limit the tours
-            if chunk_size > 0:
-                # Calculate the end index
-                start_idx = chunk_start
-                end_idx = min(start_idx + chunk_size, len(tours))
-                
-                # Get the subset of tours
-                tour_ids = list(tours.keys())[start_idx:end_idx]
-                
-                add_log_entry(f"Processing chunk {start_idx+1}-{end_idx} of {len(tours)} tours", processing_status)
-                
-                # Keep track of next chunk start
-                with processing_lock:
-                    processing_status['next_chunk'] = end_idx
-            else:
-                # Process all tours
-                tour_ids = list(tours.keys())
-            
-            # Determine optimal number of workers based on tour count
-            max_workers = min(8, len(tour_ids) // 20 + 3)
-            
-            # Process multiple tours concurrently for better speed
-            results = []
-            completed_count = 0
-            
-            # Create a thread pool executor for processing tours
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # Function to process a single tour
-                def process_single_tour(tour_id):
-                    try:
-                        tour_data = tours[tour_id]
-                        
-                        # Determine if tour is recorded or planned
-                        is_recorded = tour_data.get('sport') != 'planned'
-                        
-                        # Select appropriate output directory
-                        if use_hierarchical:
-                            tour_output_dir = recorded_dir if is_recorded else planned_dir
-                        else:
-                            tour_output_dir = output_dir
-                        
-                        # Log which directory we're using for this tour
-                        tour_type_str = "recorded" if is_recorded else "planned"
-                        add_log_entry(f"Downloading {tour_type_str} tour {tour_id} to {tour_output_dir}", processing_status)
-                        
-                        # Try using KomootGPX first
-                        filename = None
-                        if KOMOOTGPX_AVAILABLE:
-                            filename = download_tour_using_komootgpx(
-                                tour_id=tour_id,
-                                email=email,
-                                password=password,
-                                output_dir=tour_output_dir,
-                                include_poi=(not no_poi),
-                                max_desc_length=max_desc_length,
-                                max_title_length=max_title_length,
-                                add_date=add_date
-                            )
-                        
-                        # Fall back to adapter if KomootGPX failed
-                        if not filename:
-                            adapter.make_gpx(
-                                tour_id=tour_id,
-                                output_dir=tour_output_dir,
-                                include_poi=(not no_poi),
-                                skip_existing=skip_existing,
-                                tour_base=tour_data,
-                                add_date=add_date,
-                                max_title_length=max_title_length,
-                                max_desc_length=max_desc_length,
-                                return_content=False,
-                                anonymous=anonymous
-                            )
-                            filename = adapter.get_last_filename()
-                        
-                        # Download images if requested
-                        image_paths = []
-                        if download_images:
-                            try:
-                                images_dir = os.path.join(tour_output_dir, '../images')
-                                os.makedirs(images_dir, exist_ok=True)
-                                image_paths = adapter.download_tour_images(
-                                    tour_id=tour_id,
-                                    tour=tour_data,
-                                    output_dir=images_dir
-                                )
-                            except Exception as img_err:
-                                add_log_entry(f"Error downloading images for tour {tour_id}: {str(img_err)}", processing_status)
-                        
-                        # Create result
-                        result = {
-                            'id': tour_id,
-                            'name': tour_data['name'],
-                            'date': tour_data.get('date', '')[:10] if tour_data.get('date') else '',
-                            'sport': tour_data.get('sport', 'unknown'),
-                            'distance': tour_data.get('distance', 0),
-                            'distance_km': round(tour_data.get('distance', 0) / 1000, 2),
-                            'duration': round(tour_data.get('duration', 0) / 3600, 2),
-                            'elevation_up': tour_data.get('elevation_up', 0),
-                            'elevation_down': tour_data.get('elevation_down', 0),
-                            'url': f"https://www.komoot.com/tour/{tour_id}",
-                            'filename': filename,
-                            'images': image_paths,
-                            'output_dir': tour_output_dir,
-                            'is_recorded': is_recorded
-                        }
-                        
-                        return result
-                    except Exception as e:
-                        add_log_entry(f"Error processing tour {tour_id}: {str(e)}", processing_status)
-                        return None
-                
-                # Submit all tours to the thread pool
-                future_to_tour = {executor.submit(process_single_tour, tour_id): tour_id for tour_id in tour_ids}
-                
-                # Process results as they complete
-                for future in concurrent.futures.as_completed(future_to_tour):
-                    tour_id = future_to_tour[future]
-                    try:
-                        result = future.result()
-                        if result:
-                            results.append(result)
-                            completed_count += 1
-                            
-                            # Update progress
-                            with processing_lock:
-                                processing_status['progress'] = completed_count / len(tour_ids)
-                                processing_status['tours_completed'] = completed_count
-                                # Update results as we go
-                                processing_status['results'] = results.copy()
-                                
-                            tour_type = "recorded" if result.get('is_recorded', True) else "planned"
-                            add_log_entry(f"Completed {tour_type} tour {completed_count}/{len(tour_ids)}: {result['name']}", processing_status)
-                    except Exception as e:
-                        add_log_entry(f"Error processing tour {tour_id}: {str(e)}", processing_status)
-            
-            # Update status with final results
-            with processing_lock:
-                processing_status['results'] = results
-                
-                # Update final status
-                if chunk_size > 0 and end_idx < len(tours):
-                    processing_status['status'] = 'chunk_completed'
-                else:
-                    processing_status['status'] = 'completed'
-                    
-                processing_status['progress'] = 1.0
-            
-            add_log_entry(f"Processing completed. Processed {len(results)} tours.", processing_status)
-            
-        else:
-            # Process single tour
-            tour_id = tour_selection
-            
-            add_log_entry(f"Processing single tour: {tour_id}", processing_status)
-            
-            # Update status
-            with processing_lock:
-                processing_status['tours_found'] = 1
-                processing_status['tours_completed'] = 0
-                processing_status['progress'] = 0.0
-            
-            try:
-                # Try to get tour data first to determine if it's recorded or planned
-                tour_data = None
-                if not anonymous:
-                    try:
-                        tour_data = adapter.fetch_tour(tour_id, anonymous=anonymous)
-                    except:
-                        tour_data = None
-                
-                # Determine if tour is recorded or planned (if we have data)
-                is_recorded = True  # Default to recorded if we don't know
-                if tour_data:
-                    is_recorded = tour_data.get('sport') != 'planned'
-                
-                # Select appropriate output directory
-                if use_hierarchical:
-                    tour_output_dir = recorded_dir if is_recorded else planned_dir
-                else:
-                    tour_output_dir = output_dir
-                
-                # Create the output directory
-                os.makedirs(tour_output_dir, exist_ok=True)
-                
-                # Log which directory we're using
-                tour_type_str = "recorded" if is_recorded else "planned"
-                add_log_entry(f"Downloading {tour_type_str} tour {tour_id} to {tour_output_dir}", processing_status)
-                
-                # Try using KomootGPX first
-                filename = None
-                if KOMOOTGPX_AVAILABLE:
-                    add_log_entry(f"Using KomootGPX to download tour {tour_id}", processing_status)
-                    filename = download_tour_using_komootgpx(
-                        tour_id=tour_id,
-                        email=email if not anonymous else None,
-                        password=password if not anonymous else None,
-                        output_dir=tour_output_dir,
-                        include_poi=(not no_poi),
-                        max_desc_length=max_desc_length,
-                        max_title_length=max_title_length,
-                        add_date=add_date
-                    )
-                
-                # Fall back to adapter if KomootGPX failed
-                if not filename:
-                    add_log_entry(f"Using adapter to download tour {tour_id}", processing_status)
-                    
-                    # Try direct GPX API if anonymous
-                    if anonymous:
-                        try:
-                            add_log_entry(f"Trying direct GPX API for tour {tour_id}", processing_status)
-                            gpx_content = download_tour_using_gpx_api(tour_id)
-                            
-                            # Save to file
-                            filename = f"Tour_{tour_id}.gpx"
-                            filepath = os.path.join(tour_output_dir, filename)
-                            
-                            with open(filepath, 'wb') as f:
-                                f.write(gpx_content)
-                                
-                            add_log_entry(f"Successfully downloaded tour {tour_id} with direct API", processing_status)
-                        except Exception as api_err:
-                            add_log_entry(f"Direct API download failed: {str(api_err)}", processing_status)
-                            
-                            # Fall back to adapter
-                            adapter.make_gpx(
-                                tour_id=tour_id,
-                                output_dir=tour_output_dir,
-                                include_poi=(not no_poi),
-                                skip_existing=skip_existing,
-                                tour_base=None,
-                                add_date=add_date,
-                                max_title_length=max_title_length,
-                                max_desc_length=max_desc_length,
-                                return_content=False,
-                                anonymous=anonymous
-                            )
-                            filename = adapter.get_last_filename()
-                    else:
-                        # Use adapter for authenticated mode
-                        adapter.make_gpx(
-                            tour_id=tour_id,
-                            output_dir=tour_output_dir,
-                            include_poi=(not no_poi),
-                            skip_existing=skip_existing,
-                            tour_base=None,
-                            add_date=add_date,
-                            max_title_length=max_title_length,
-                            max_desc_length=max_desc_length,
-                            return_content=False,
-                            anonymous=anonymous
-                        )
-                        filename = adapter.get_last_filename()
-                
-                # Get the tour data if we don't have it already
-                if not tour_data:
-                    tour_data = adapter.get_last_tour()
-                    if tour_data:
-                        is_recorded = tour_data.get('sport') != 'planned'
-                
-                # Download images if requested
-                image_paths = []
-                if download_images:
-                    try:
-                        images_dir = os.path.join(tour_output_dir, '../images')
-                        os.makedirs(images_dir, exist_ok=True)
-                        image_paths = adapter.download_tour_images(
-                            tour_id=tour_id,
-                            tour=tour_data,
-                            output_dir=images_dir
-                        )
-                        add_log_entry(f"Downloaded {len(image_paths)} images for tour {tour_id}", processing_status)
-                    except Exception as img_err:
-                        add_log_entry(f"Error downloading images for tour {tour_id}: {str(img_err)}", processing_status)
-                
-                # Add to results
-                result = {
-                    'id': tour_id,
-                    'name': tour_data['name'] if tour_data else f"Tour {tour_id}",
-                    'date': tour_data.get('date', '')[:10] if tour_data and tour_data.get('date') else '',
-                    'sport': tour_data.get('sport', 'unknown') if tour_data else 'unknown',
-                    'distance': tour_data.get('distance', 0) if tour_data else 0,
-                    'distance_km': round(tour_data.get('distance', 0) / 1000, 2) if tour_data else 0,
-                    'duration': round(tour_data.get('duration', 0) / 3600, 2) if tour_data else 0,
-                    'elevation_up': tour_data.get('elevation_up', 0) if tour_data else 0,
-                    'elevation_down': tour_data.get('elevation_down', 0) if tour_data else 0,
-                    'url': f"https://www.komoot.com/tour/{tour_id}",
-                    'filename': filename,
-                    'images': image_paths,
-                    'output_dir': tour_output_dir,
-                    'is_recorded': is_recorded
-                }
-                
-                # Update status with results
-                with processing_lock:
-                    processing_status['results'] = [result]
-                    processing_status['status'] = 'completed'
-                    processing_status['progress'] = 1.0
-                    processing_status['tours_completed'] = 1
-                
-                tour_type = "recorded" if is_recorded else "planned"
-                add_log_entry(f"Processing completed for {tour_type} tour {tour_id}", processing_status)
-                
-            except Exception as e:
-                add_log_entry(f"Error processing tour {tour_id}: {str(e)}", processing_status)
-                
-                with processing_lock:
-                    processing_status['status'] = 'error'
-                    processing_status['error'] = str(e)
-        
-    except Exception as e:
-        # Handle any uncaught exceptions
-        error_msg = str(e)
-        logger.error(f"Error in processing thread: {error_msg}")
-        add_log_entry(f"Error: {error_msg}", processing_status)
-        
-        with processing_lock:
-            processing_status['status'] = 'error'
-            processing_status['error'] = error_msg
-
-def scrape_collections_thread(email, password, collection_type):
-    """Scrape collections in a background thread"""
-    try:
-        with collections_lock:
-            collections_status['status'] = 'running'
-            
-        logger.info(f"Starting Komoot collections scraper")
-        
-        # Login to Komoot
-        add_log_entry(f"Logging in as {email}... (type: {collection_type})", collections_status)
-        adapter = KomootAdapter()
-        adapter.login(email, password)
-        add_log_entry(f"Logged in successfully as {adapter.get_display_name()}", collections_status)
-        
-        # Get user ID for folder organization
-        user_id = adapter.get_user_id()
-        user_name = adapter.get_display_name()
-        
-        # Fetch collections
-        add_log_entry(f"Fetching collections...", collections_status)
-        basic_collections = adapter.fetch_collections(collection_type)
-        add_log_entry(f"Found {len(basic_collections)} collections", collections_status)
-        
-        # Enhance collections with complete tour data using concurrency
-        enhanced_collections = []
-        
-        # Determine optimal number of workers based on collection count
-        max_workers = min(5, len(basic_collections))
-        
-        # Process collections concurrently for better speed
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Function to enhance a single collection
-            def enhance_collection(collection):
-                try:
-                    if 'url' not in collection:
-                        add_log_entry(f"Skipping collection without URL: {collection.get('name', 'Unnamed')}", collections_status)
-                        return None
-                    
-                    add_log_entry(f"Fetching complete data for collection: {collection['name']}", collections_status)
-                    
-                    # Use our enhanced function that handles pagination with concurrency
-                    full_collection = fetch_all_tours_from_collection(adapter, collection['url'], collections_status)
-                    
-                    if full_collection:
-                        add_log_entry(f"Successfully fetched all {len(full_collection['tours'])} tours for collection: {collection['name']}", collections_status)
-                        return full_collection
-                    else:
-                        # Fall back to the original collection if enhancement failed
-                        add_log_entry(f"Using basic collection data for: {collection['name']}", collections_status)
-                        return collection
-                except Exception as e:
-                    add_log_entry(f"Error fetching details for collection {collection.get('name', 'Unknown')}: {str(e)}", collections_status)
-                    return collection
-            
-            # Submit all collections to the thread pool
-            future_to_collection = {executor.submit(enhance_collection, collection): collection for collection in basic_collections}
-            
-            # Process results as they complete
-            for i, future in enumerate(concurrent.futures.as_completed(future_to_collection)):
-                try:
-                    enhanced_collection = future.result()
-                    if enhanced_collection:
-                        enhanced_collections.append(enhanced_collection)
-                    
-                    # Update progress
-                    with collections_lock:
-                        collections_status['collections_completed'] = i + 1
-                        collections_status['collections_found'] = len(basic_collections)
-                        collections_status['progress'] = (i + 1) / len(basic_collections)
-                        
-                except Exception as e:
-                    add_log_entry(f"Error processing collection: {str(e)}", collections_status)
-        
-        # Update status with results
-        with collections_lock:
-            collections_status['results'] = enhanced_collections
-            collections_status['status'] = 'completed'
-            collections_status['progress'] = 1.0
-            collections_status['collections_found'] = len(basic_collections)
-            collections_status['collections_completed'] = len(enhanced_collections)
-            
-        add_log_entry(f"Collections scraping completed successfully", collections_status)
-        
-        # Save collections data to files with user_id
-        collections_manager.save_collections_data(enhanced_collections, user_id)
-        
-    except Exception as e:
-        # Handle any uncaught exceptions
-        error_msg = str(e)
-        logger.error(f"Error in collections thread: {error_msg}")
-        add_log_entry(f"Error: {error_msg}", collections_status)
-        
-        with collections_lock:
-            collections_status['status'] = 'error'
-            collections_status['error'] = error_msg
-
-def scrape_public_collections_thread(collection_urls):
-    """Scrapes public collections by URL in background thread with improved performance"""
-    try:
-        with collections_lock:
-            collections_status['status'] = 'running'
-            collections_status['collections_found'] = len(collection_urls)
-        
-        # Log start
-        add_log_entry(f"Starting public collections scraper for {len(collection_urls)} URLs", collections_status)
-        
-        # Create a new adapter instance specifically for anonymous access
-        anonymous_adapter = KomootAdapter()
-        
-        # Process collections from user collection pages and direct collection links
-        all_collections = []
-        processed_urls = 0
-        user_id = None
-        
-        # Extract user ID from the first URL - if available
-        for url in collection_urls:
-            extracted_user_id = extract_user_id_from_url(url)
-            if extracted_user_id:
-                user_id = extracted_user_id
-                add_log_entry(f"Found user ID in URL: {user_id}", collections_status)
-                break
-        
-        # Determine optimal number of workers based on URL count
-        max_workers = min(5, len(collection_urls))
-        
-        # Process URLs concurrently for better speed
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Function to process a single URL
-            def process_url(url):
-                try:
-                    url = url.strip()
-                    if not url:
-                        return {'user_id': None, 'collections': []}
-                        
-                    add_log_entry(f"Processing URL: {url}", collections_status)
-                    
-                    # Extract user ID from the URL if available
-                    extracted_user_id = extract_user_id_from_url(url)
-                    
-                    # Check if it's a user collections page or a direct collection link
-                    if '/user/' in url and '/collections/' in url:
-                        # This is a user collections page
-                        add_log_entry(f"Detected user collections page: {url}", collections_status)
-                        
-                        # Extract user ID and collection type from URL
-                        parts = url.split('/')
-                        user_idx = parts.index('user') if 'user' in parts else -1
-                        coll_idx = parts.index('collections') if 'collections' in parts else -1
-                        
-                        if user_idx >= 0 and user_idx + 1 < len(parts) and coll_idx >= 0 and coll_idx + 1 < len(parts):
-                            page_user_id = parts[user_idx + 1]
-                            coll_type = parts[coll_idx + 1]
-                            
-                            add_log_entry(f"Attempting to scrape collections for user {page_user_id} of type {coll_type}", collections_status)
-                            
-                            try:
-                                # Set browser-like headers
-                                headers = {
-                                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                                    'Accept-Language': 'en-US,en;q=0.5',
-                                    'Referer': 'https://www.komoot.com/',
-                                    'DNT': '1'
-                                }
-                                
-                                response = make_request_with_retry(url, headers, max_retries=3)
-                                
-                                if response.status_code == 200:
-                                    # Extract collections from the page
-                                    if BS4_AVAILABLE:
-                                        page_collections = anonymous_adapter.extract_collections_from_page(response.text, coll_type)
-                                        add_log_entry(f"Found {len(page_collections)} collections on page", collections_status)
-                                        
-                                        # Set the user ID for each collection explicitly
-                                        for collection in page_collections:
-                                            if 'creator' not in collection:
-                                                collection['creator'] = {}
-                                            if 'id' not in collection['creator']:
-                                                collection['creator']['id'] = page_user_id
-                                        
-                                        # Process each collection to get full details
-                                        detailed_collections = []
-                                        for collection in page_collections:
-                                            try:
-                                                if 'url' in collection:
-                                                    # Use our enhanced function to get all tours
-                                                    detailed = fetch_all_tours_from_collection(anonymous_adapter, collection['url'], collections_status)
-                                                    if detailed:
-                                                        # Ensure user ID is preserved
-                                                        if 'creator' not in detailed:
-                                                            detailed['creator'] = {}
-                                                        if 'id' not in detailed['creator'] or not detailed['creator']['id']:
-                                                            detailed['creator']['id'] = page_user_id
-                                                        detailed_collections.append(detailed)
-                                                    else:
-                                                        detailed_collections.append(collection)
-                                            except Exception as e:
-                                                add_log_entry(f"Error fetching details for collection {collection.get('name', 'Unknown')}: {str(e)}", collections_status)
-                                                detailed_collections.append(collection)  # Keep original if enhancement fails
-                                                
-                                        return {
-                                            'user_id': page_user_id,
-                                            'collections': detailed_collections
-                                        }
-                                    else:
-                                        add_log_entry("BeautifulSoup4 is not installed. Cannot parse HTML.", collections_status)
-                                else:
-                                    add_log_entry(f"Failed to access URL: {url}, status code: {response.status_code}", collections_status)
-                                    
-                            except Exception as e:
-                                add_log_entry(f"Error processing collections page: {str(e)}", collections_status)
-                                
-                    elif '/collection/' in url:
-                        # This is a direct collection link
-                        try:
-                            add_log_entry(f"Fetching direct collection: {url} (may take time for large collections)", collections_status)
-                            
-                            # Use our enhanced function for fetching all tours in a collection
-                            collection = fetch_all_tours_from_collection(anonymous_adapter, url, collections_status)
-                            
-                            if collection:
-                                # Extract user ID from collection's creator if available
-                                collection_user_id = None
-                                if 'creator' in collection and 'id' in collection['creator']:
-                                    collection_user_id = collection['creator']['id']
-                                
-                                # If we have a user ID from URL, ensure it's set in the collection
-                                if extracted_user_id and not collection_user_id:
-                                    if 'creator' not in collection:
-                                        collection['creator'] = {}
-                                    collection['creator']['id'] = extracted_user_id
-                                    collection_user_id = extracted_user_id
-                                
-                                return {
-                                    'user_id': collection_user_id or extracted_user_id,
-                                    'collections': [collection]
-                                }
-                            else:
-                                add_log_entry(f"Failed to get collection data from URL: {url}", collections_status)
-                                return {'user_id': extracted_user_id, 'collections': []}
-                                
-                        except Exception as e:
-                            add_log_entry(f"Error fetching direct collection: {str(e)}", collections_status)
-                            return {'user_id': extracted_user_id, 'collections': []}
-                    else:
-                        add_log_entry(f"Unrecognized URL format: {url}", collections_status)
-                        return {'user_id': extracted_user_id, 'collections': []}
-                    
-                    return {'user_id': extracted_user_id, 'collections': []}
-                    
-                except Exception as e:
-                    add_log_entry(f"Error processing URL {url}: {str(e)}", collections_status)
-                    return {'user_id': None, 'collections': []}
-            
-            # Submit all URLs to the thread pool
-            future_to_url = {executor.submit(process_url, url): url for url in collection_urls}
-            
-            # Process results as they complete
-            for future in concurrent.futures.as_completed(future_to_url):
-                try:
-                    # Get the URL that this future was processing
-                    url = future_to_url[future]
-                    # Get the result from the future
-                    result = future.result()
-                    
-                    if result:
-                        # Extract collections from result
-                        if result['collections']:
-                            # Ensure user ID is properly set in each collection
-                            for collection in result['collections']:
-                                if result['user_id']:
-                                    if 'creator' not in collection:
-                                        collection['creator'] = {}
-                                    if 'id' not in collection['creator'] or not collection['creator']['id']:
-                                        collection['creator']['id'] = result['user_id']
-                            
-                            all_collections.extend(result['collections'])
-                        
-                        # Update user ID if we found one
-                        if not user_id and result['user_id']:
-                            user_id = result['user_id']
-                            add_log_entry(f"Updated primary user ID to: {user_id}", collections_status)
-                    
-                    # Update progress
-                    processed_urls += 1
-                    with collections_lock:
-                        collections_status['progress'] = processed_urls / len(collection_urls)
-                        collections_status['collections_completed'] = processed_urls
-                        
-                except Exception as e:
-                    add_log_entry(f"Error processing URL result: {str(e)}", collections_status)
-        
-        # Ensure all collections have the user ID properly set
-        if user_id:
-            for collection in all_collections:
-                if 'creator' not in collection:
-                    collection['creator'] = {}
-                if 'id' not in collection['creator'] or not collection['creator']['id']:
-                    collection['creator']['id'] = user_id
-        
-        # Save the results
-        with collections_lock:
-            collections_status['results'] = all_collections
-            collections_status['status'] = 'completed'
-            collections_status['progress'] = 1.0
-            collections_status['collections_completed'] = processed_urls
-            collections_status['collections_found'] = len(all_collections)
-        
-        add_log_entry(f"Public collections scraping completed. Found {len(all_collections)} collections with user ID: {user_id}", collections_status)
-        
-        # Save collections data to files if there are results, with explicit user_id
-        if all_collections:
-            collections_manager.save_collections_data(all_collections, user_id)
-        
-    except Exception as e:
-        # Log any errors
-        error_msg = str(e)
-        logger.error(f"Error during public collections scraping: {error_msg}")
-        add_log_entry(f"Error: {error_msg}", collections_status)
-        
-        # Update status to error
-        with collections_lock:
-            collections_status['status'] = 'error'
-            collections_status['error'] = error_msg
-
-def download_collection_tours_thread(collections, output_dir, include_metadata, output_dir_structure, download_images, gpx_options, user_id):
-    """Download all tours in a collection as GPX files"""
-    try:
-        with processing_lock:
-            processing_status['status'] = 'running'
-            
-        # Log parameters for debugging
-        add_log_entry(f"Starting collection tours download with parameters:", processing_status)
-        add_log_entry(f"- Output directory: {output_dir}", processing_status)
-        add_log_entry(f"- Include metadata: {include_metadata}", processing_status)
-        add_log_entry(f"- Output directory structure: {output_dir_structure}", processing_status)
-        add_log_entry(f"- Download images: {download_images}", processing_status)
-        add_log_entry(f"- User ID: {user_id}", processing_status)
-        add_log_entry(f"- GPX options: {gpx_options}", processing_status)
-        
-        # Log the user ID we received
-        add_log_entry(f"Starting download with user ID: {user_id}", processing_status)
-        
-        # Process collections to remove duplicate tours
-        for collection in collections:
-            if 'tours' in collection and collection['tours']:
-                # Store unique tours by ID, using the better name version
-                unique_tours = {}
-                for tour in collection['tours']:
-                    tour_id = tour['id']
-                    if tour_id in unique_tours:
-                        # If this tour has a better name than the existing one, use it
-                        if unique_tours[tour_id]['name'].startswith('Tour ') and not tour['name'].startswith('Tour '):
-                            unique_tours[tour_id] = tour
-                    else:
-                        unique_tours[tour_id] = tour
-                
-                # Replace the tours array with deduplicated tours
-                collection['tours'] = list(unique_tours.values())
-                collection['tours_count'] = len(collection['tours'])
-        
-        # Count total tours across all collections
-        total_tours = sum(len(collection.get('tours', [])) for collection in collections)
-        total_collections = len(collections)
-        
-        with processing_lock:
-            processing_status['tours_found'] = total_tours
-        
-        add_log_entry(f"Starting download of {total_tours} tours from {total_collections} collections", processing_status)
-        
-        # Create a Komoot adapter for anonymous download
-        adapter = KomootAdapter()
-        
-        # Track global progress
-        completed_tours = 0
-        completed_collections = 0
-        all_results = []
-        
-        # If no user_id was provided, try to extract it from the first collection
-        if not user_id:
-            for collection in collections:
-                if 'creator' in collection and 'id' in collection['creator']:
-                    user_id = collection['creator']['id']
-                    add_log_entry(f"Using creator ID from collection as primary user ID: {user_id}", processing_status)
-                    break
-                
-                # If still no user ID, try to extract from URL
-                if collection.get('url'):
-                    extracted_id = extract_user_id_from_url(collection.get('url'))
-                    if extracted_id:
-                        user_id = extracted_id
-                        add_log_entry(f"Extracted user ID from URL as primary user ID: {user_id}", processing_status)
-                        break
-        
-        # First create collections directory
-        collections_base_dir = os.path.join(output_dir, 'collections')
-        os.makedirs(collections_base_dir, exist_ok=True)
-        
-        # Create user directory under collections directory
-        if user_id:
-            # Create a single user directory for all collections
-            user_dir = os.path.join(collections_base_dir, f"user-{user_id}")
-        else:
-            # Fallback if no user ID is found
-            add_log_entry("WARNING: No user ID found, using anonymous folder", processing_status)
-            user_dir = os.path.join(collections_base_dir, "user-anonymous")
-        
-        # Create user directory
-        os.makedirs(user_dir, exist_ok=True)
-        
-        # Create user's index.html
-        user_name = None
-        if len(collections) > 0 and 'creator' in collections[0] and 'display_name' in collections[0]['creator']:
-            user_name = collections[0]['creator']['display_name']
-            
-        index_html_content = create_user_index_html(user_id or "anonymous", user_name)
-        
-        with open(os.path.join(user_dir, 'index.html'), 'w', encoding='utf-8') as f:
-            f.write(index_html_content)
-        
-        # Create collections folder for this user
-        collections_dir = os.path.join(user_dir, 'collections')
-        os.makedirs(collections_dir, exist_ok=True)
-        
-        # Determine optimal number of workers based on collection count
-        collection_workers = min(3, total_collections)
-        
-        # Process collections concurrently using a ThreadPoolExecutor
-        with concurrent.futures.ThreadPoolExecutor(max_workers=collection_workers) as executor_collections:
-            
-            # Function to process a single collection
-            def process_collection(collection_idx, collection):
-                try:
-                    collection_id = collection.get('id')
-                    collection_name = collection.get('name', f"Collection_{collection_id}")
-                    
-                    # Create slug for collection folder
-                    collection_slug = get_collection_slug(collection.get('url', ''), collection_name, max_slug_length=50)
-                    
-                    # Create folder for this specific collection in the user's collections directory
-                    collection_dir = os.path.join(collections_dir, collection_slug)
-                    os.makedirs(collection_dir, exist_ok=True)
-                    
-                    add_log_entry(f"Processing collection {collection_idx+1}/{total_collections}: {collection_name}", processing_status)
-                    add_log_entry(f"Collection output directory: {collection_dir}", processing_status)
-                    
-                    # Save collection metadata if requested
-                    if include_metadata:
-                        try:
-                            # Save JSON metadata
-                            with open(os.path.join(collection_dir, 'collection_info.json'), 'w', encoding='utf-8') as f:
-                                json.dump(collection, f, indent=2, ensure_ascii=False)
-                                
-                            # Save human-readable metadata
-                            with open(os.path.join(collection_dir, 'collection_info.txt'), 'w', encoding='utf-8') as f:
-                                f.write(f"Collection: {collection_name}\n")
-                                f.write(f"ID: {collection_id}\n")
-                                f.write(f"Type: {collection.get('type', 'Unknown')}\n")
-                                f.write(f"Privacy: {collection.get('privacy', 'Unknown')}\n")
-                                f.write(f"Tours: {len(collection.get('tours', []))}\n\n")
-                                
-                                if collection.get('description'):
-                                    f.write(f"Description:\n{collection['description']}\n\n")
-                                    
-                                # Add statistics if available
-                                if collection.get('statistics'):
-                                    f.write("Statistics:\n")
-                                    for key, value in collection['statistics'].items():
-                                        f.write(f"- {key}: {value}\n")
-                                        
-                            add_log_entry(f"Saved collection metadata to {collection_dir}", processing_status)
-                        except Exception as e:
-                            add_log_entry(f"Error saving collection metadata: {str(e)}", processing_status)
-                    
-                    # Get the tours from the collection
-                    tours = collection.get('tours', [])
-                    
-                    # Track collection progress
-                    collection_completed = 0
-                    collection_results = []
-                    
-                    # Determine optimal number of workers based on tour count
-                    tour_workers = min(5, len(tours))
-                    
-                    # Process tours in a collection concurrently
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=tour_workers) as executor_tours:
-                        
-                        # Function to process a single tour
-                        def process_tour(tour_idx, tour):
-                            try:
-                                tour_id = tour.get('id')
-                                tour_name = tour.get('name', f"Tour_{tour_id}")
-                                
-                                # Get GPX option values
-                                no_poi = gpx_options.get('noPoi', False)
-                                skip_existing = gpx_options.get('skipExisting', True)
-                                add_date = gpx_options.get('addDate', True)
-                                max_title_length = gpx_options.get('maxTitleLength', -1)
-                                max_desc_length = gpx_options.get('maxDescLength', -1)
-                                
-                                # Try using KomootGPX first if available
-                                filename = None
-                                if KOMOOTGPX_AVAILABLE:
-                                    filename = download_tour_using_komootgpx(
-                                        tour_id=tour_id,
-                                        output_dir=collection_dir,
-                                        include_poi=(not no_poi),
-                                        max_desc_length=max_desc_length,
-                                        max_title_length=max_title_length,
-                                        add_date=add_date
-                                    )
-                                
-                                # Fall back to direct API if KomootGPX failed
-                                if not filename:
-                                    try:
-                                        gpx_content = download_tour_using_gpx_api(tour_id)
-                                        
-                                        # Generate filename
-                                        if add_date and 'date' in tour and tour['date']:
-                                            date_str = tour['date'][:10] + '_'
-                                        else:
-                                            date_str = ''
-                                            
-                                        title = sanitize_filename(tour_name)
-                                        if max_title_length == 0:
-                                            title = f"{tour_id}"
-                                        elif max_title_length > 0 and len(title) > max_title_length:
-                                            title = f"{title[:max_title_length]}-{tour_id}"
-                                        else:
-                                            title = f"{title}-{tour_id}"
-                                            
-                                        filename = f"{date_str}{title}.gpx"
-                                        filepath = os.path.join(collection_dir, filename)
-                                        
-                                        # Save to file
-                                        with open(filepath, 'wb') as f:
-                                            f.write(gpx_content)
-                                    except Exception as api_err:
-                                        # Fall back to adapter
-                                        adapter.make_gpx(
-                                            tour_id=tour_id,
-                                            output_dir=collection_dir,
-                                            include_poi=(not no_poi),
-                                            skip_existing=skip_existing,
-                                            tour_base=None,
-                                            add_date=add_date,
-                                            max_title_length=max_title_length,
-                                            max_desc_length=max_desc_length,
-                                            return_content=False,
-                                            anonymous=True
-                                        )
-                                        filename = adapter.get_last_filename()
-                                
-                                # Get the tour data
-                                tour_data = adapter.get_last_tour() or tour
-                                
-                                # Download images if requested
-                                image_paths = []
-                                if download_images:
-                                    try:
-                                        # Create an images subdirectory within the collection directory
-                                        images_dir = os.path.join(collection_dir, 'images')
-                                        image_paths = adapter.download_tour_images(
-                                            tour_id=tour_id,
-                                            tour=tour_data,
-                                            output_dir=images_dir
-                                        )
-                                    except Exception:
-                                        pass
-                                
-                                # Create a result object
-                                result = {
-                                    'id': tour_id,
-                                    'name': tour_name,
-                                    'collection_id': collection_id,
-                                    'collection_name': collection_name,
-                                    'url': tour.get('url'),
-                                    'filename': filename,
-                                    'output_dir': collection_dir,
-                                    'images': image_paths
-                                }
-                                
-                                # Add additional fields from tour_data if available
-                                if isinstance(tour_data, dict):
-                                    for key in ['date', 'sport', 'distance', 'distance_km', 'duration', 'elevation_up', 'elevation_down']:
-                                        if key in tour_data:
-                                            result[key] = tour_data[key]
-                                            
-                                    # Format fields with proper types
-                                    if 'date' in result and result['date']:
-                                        result['date'] = result['date'][:10]  # Just the date part
-                                    if 'distance' in tour_data:
-                                        result['distance_km'] = round(tour_data['distance'] / 1000, 2)
-                                    if 'duration' in tour_data:
-                                        result['duration'] = round(tour_data['duration'] / 3600, 2)
-                                
-                                return result
-                                
-                            except Exception as e:
-                                add_log_entry(f"Error processing tour {tour_id}: {str(e)}", processing_status)
-                                return None
-                        
-                        # Submit all tours to the thread pool
-                        tour_futures = {}
-                        for tour_idx, tour in enumerate(tours):
-                            tour_futures[executor_tours.submit(process_tour, tour_idx, tour)] = tour
-                        
-                        # Process results as they complete
-                        for future in concurrent.futures.as_completed(tour_futures):
-                            result = future.result()
-                            if result:
-                                collection_results.append(result)
-                                nonlocal completed_tours
-                                completed_tours += 1
-                                
-                                # Update progress
-                                with processing_lock:
-                                    processing_status['tours_completed'] = completed_tours
-                                    processing_status['progress'] = completed_tours / total_tours
-                    
-                    # Create a summary file for this collection
-                    try:
-                        with open(os.path.join(collection_dir, 'download_summary.json'), 'w', encoding='utf-8') as f:
-                            summary = {
-                                'collection': {
-                                    'id': collection_id,
-                                    'name': collection_name,
-                                    'total_tours': len(tours)
-                                },
-                                'downloaded_tours': len(collection_results),
-                                'tours': collection_results
-                            }
-                            json.dump(summary, f, indent=2, ensure_ascii=False)
-                    except Exception as e:
-                        add_log_entry(f"Error saving collection summary: {str(e)}", processing_status)
-                    
-                    # Create CSV summary with bikepacking.com-like format
-                    try:
-                        csv_path = os.path.join(collection_dir, f"{collection_slug}_tours.csv")
-                        
-                        # Define comprehensive fieldnames
-                        fieldnames = [
-                            "id", "timestamp", "name", "distance_km", "distance_mi", 
-                            "duration", "unpaved_percentage", "singletrack_percentage", "rideable_percentage",
-                            "total_ascent", "total_descent", "high_point", "climbing_intensity",
-                            "country", "region", "collection_name", "collection_id", 
-                            "sport_type", "description", "url", "gpx_url", "image_url", 
-                            "collection_cover_image", "date_created"
-                        ]
-                        
-                        # Create CSV tours data
-                        csv_tours = []
-                        
-                        # Current timestamp for all entries
-                        current_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        
-                        for result in collection_results:
-                            # Create standardized tour object
-                            distance_km = result.get('distance_km', 0)
-                            
-                            csv_tour = {
-                                "id": result.get('id', ''),
-                                "timestamp": current_timestamp,
-                                "name": result.get('name', ''),
-                                "distance_km": f"{distance_km:.1f}" if distance_km else "",
-                                "distance_mi": f"{distance_km * 0.621371:.1f}" if distance_km else "",
-                                "duration": f"{result.get('duration', 0):.1f}" if result.get('duration') else "",
-                                "unpaved_percentage": result.get('unpaved_percentage', ''),
-                                "singletrack_percentage": result.get('singletrack_percentage', ''),
-                                "rideable_percentage": result.get('rideable_percentage', ''),
-                                "total_ascent": result.get('elevation_up', ''),
-                                "total_descent": result.get('elevation_down', ''),
-                                "high_point": result.get('high_point', ''),
-                                "country": result.get('country', ''),
-                                "region": collection.get('region', ''),
-                                "collection_name": collection_name,
-                                "collection_id": collection_id,
-                                "sport_type": result.get('sport', ''),
-                                "description": result.get('description', ''),
-                                "url": result.get('url', f"https://www.komoot.com/tour/{result.get('id', '')}"),
-                                "gpx_url": result.get('gpx_url', ''),
-                                "image_url": result.get('images', [''])[0] if result.get('images') else '',
-                                "collection_cover_image": collection.get('cover_image_url', ''),
-                                "date_created": result.get('date', '')
-                            }
-                            
-                            # Add calculated fields
-                            if result.get('elevation_up') and distance_km:
-                                try:
-                                    # Calculate meters climbed per kilometer
-                                    meters_per_km = float(result['elevation_up']) / float(distance_km)
-                                    csv_tour["climbing_intensity"] = f"{meters_per_km:.1f}"
-                                except:
-                                    csv_tour["climbing_intensity"] = ""
-                            else:
-                                csv_tour["climbing_intensity"] = ""
-                                
-                            csv_tours.append(csv_tour)
-                        
-                        # Only include fields that have data
-                        used_fields = set()
-                        for tour in csv_tours:
-                            for field, value in tour.items():
-                                if value:
-                                    used_fields.add(field)
-                        
-                        # Always include essential fields
-                        essential_fields = ["id", "name", "url", "timestamp"]
-                        for field in essential_fields:
-                            used_fields.add(field)
-                        
-                        # Filter fieldnames to only include fields that have data
-                        filtered_fieldnames = [f for f in fieldnames if f in used_fields]
-                        
-                        with open(csv_path, 'w', encoding='utf-8', newline='') as csvfile:
-                            writer = csv.DictWriter(csvfile, fieldnames=filtered_fieldnames, extrasaction='ignore')
-                            writer.writeheader()
-                            writer.writerows(csv_tours)
-                        
-                        add_log_entry(f"Created CSV summary at {csv_path}", processing_status)
-                    except Exception as e:
-                        add_log_entry(f"Error creating CSV summary: {str(e)}", processing_status)
-                    
-                    return {
-                        'collection_id': collection_id,
-                        'collection_name': collection_name,
-                        'results': collection_results
-                    }
-                    
-                except Exception as e:
-                    add_log_entry(f"Error processing collection {collection.get('name', 'Unknown')}: {str(e)}", processing_status)
-                    return {
-                        'collection_id': collection.get('id'),
-                        'collection_name': collection.get('name', 'Unknown'),
-                        'results': []
-                    }
-            
-            # Submit all collections to the thread pool
-            collection_futures = {}
-            for collection_idx, collection in enumerate(collections):
-                collection_futures[executor_collections.submit(process_collection, collection_idx, collection)] = collection
-            
-            # Process results as they complete
-            for future in concurrent.futures.as_completed(collection_futures):
-                try:
-                    collection_result = future.result()
-                    if collection_result:
-                        all_results.extend(collection_result.get('results', []))
-                        
-                        completed_collections += 1
-                        add_log_entry(f"Completed collection: {collection_result['collection_name']} with {len(collection_result['results'])} tours", processing_status)
-                        
-                except Exception as e:
-                    add_log_entry(f"Error processing collection result: {str(e)}", processing_status)
-        
-        # Update status with final results
-        with processing_lock:
-            processing_status['results'] = all_results
-            processing_status['status'] = 'completed'
-            processing_status['progress'] = 1.0
-            processing_status['tours_completed'] = completed_tours
-        
-        add_log_entry(f"Download completed. Downloaded {completed_tours} tours from {completed_collections} collections.", processing_status)
-        
-    except Exception as e:
-        error_msg = str(e)
-        logger.error(f"Error in collection tours download thread: {error_msg}")
-        add_log_entry(f"Error: {error_msg}", processing_status)
-        
-        with processing_lock:
-            processing_status['status'] = 'error'
-            processing_status['error'] = error_msg
-
-@app.route('/api/enhance-collections', methods=['POST'])
-def enhance_saved_collections():
-    """Enhance previously saved collections with detailed tour data"""
-    try:
-        # Get parameters from request
-        data = request.json
-        if not data:
-            return jsonify({'error': 'No data provided'}), 400
-            
-        # Get user ID - required to locate the saved collections
-        user_id = data.get('userId')
-        if not user_id:
-            return jsonify({'error': 'User ID is required to locate saved collections'}), 400
-            
-        # Set the output directory path
-        output_dir = get_default_output_dir('collections')
-        user_dir = os.path.join(output_dir, f"user-{user_id}")
-        
-        # Check if the user directory exists
-        if not os.path.exists(user_dir):
-            return jsonify({'error': f'No saved collections found for user ID: {user_id}'}), 404
-            
-        # Find the most recent collections file with basic metadata
-        basic_json_files = [f for f in os.listdir(user_dir) if f.startswith('all_collections_') and f.endswith('_basic.json')]
-        
-        if not basic_json_files:
-            return jsonify({'error': f'No basic collections file found in {user_dir}'}), 404
-            
-        # Use the most recent basic file
-        collections_file = os.path.join(user_dir, sorted(basic_json_files)[-1])
-        
-        logger.info(f"Starting enhancement of saved collections for user ID: {user_id}")
-        
-        # Reset collections status
-        with collections_lock:
-            reset_status(collections_status)
-            collections_status['status'] = 'running'
-            add_log_entry(f"Loading saved collections from: {collections_file}", collections_status)
-        
-        # Start a background thread for the enhancement process
-        threading.Thread(
-            target=enhance_collections_thread,
-            args=(collections_file, user_id)
-        ).start()
-        
-        return jsonify({
-            'success': True, 
-            'message': 'Enhancement of saved collections started',
-            'statusEndpoint': '/api/collections-status'
-        })
-        
-    except Exception as e:
-        logger.error(f"Error starting collection enhancement: {str(e)}")
-        return jsonify({'error': str(e)}), 500
-
-
-def enhance_collections_thread(collections_file, user_id):
-    """Background thread to enhance previously saved collections with detailed tour data"""
-    try:
-        # Load collections from the JSON file
-        try:
-            with open(collections_file, 'r', encoding='utf-8') as f:
-                collections = json.load(f)
-            
-            add_log_entry(f"Loaded {len(collections)} collections from file", collections_status)
-        except Exception as e:
-            add_log_entry(f"Error loading collections file: {str(e)}", collections_status)
-            with collections_lock:
-                collections_status['status'] = 'error'
-                collections_status['error'] = f"Failed to load collections file: {str(e)}"
-            return
-        
-        # Update status with collection count
-        with collections_lock:
-            collections_status['collections_found'] = len(collections)
-        
-        # Create a KomootAdapter for enhancing tour data
-        adapter = KomootAdapter()
-        
-        # Enhance each collection one by one
-        enhanced_collections = []
-        enhanced_count = 0
-        total_enhanced_tours = 0
-        
-        for i, collection in enumerate(collections):
-            try:
-                collection_name = collection.get('name', f"Collection {i+1}")
-                add_log_entry(f"Enhancing collection {i+1}/{len(collections)}: {collection_name}", collections_status)
-                
-                # Check if collection is already enhanced by looking for key indicators of enhanced tour data
-                tour_count = len(collection.get('tours', []))
-                already_enhanced_count = sum(1 for tour in collection.get('tours', []) 
-                                         if (tour.get('distance_km') is not None or tour.get('distance') is not None) and
-                                         not tour.get('name', '').startswith(f"Tour {tour.get('id', '')}"))
-                
-                if tour_count > 0 and already_enhanced_count / tour_count > 0.8:
-                    add_log_entry(f"Collection '{collection_name}' already enhanced ({already_enhanced_count}/{tour_count} enhanced tours)", collections_status)
-                    # Mark as explicitly enhanced for UI state
-                    if 'is_enhanced' not in collection:
-                        collection['is_enhanced'] = True
-                    enhanced_collections.append(collection)
-                    enhanced_count += 1
-                    
-                    # Update progress
-                    with collections_lock:
-                        collections_status['collections_completed'] = enhanced_count
-                        collections_status['progress'] = enhanced_count / len(collections)
-                    
-                    continue
-                
-                # Only enhance if the collection has a URL
-                if 'url' not in collection:
-                    add_log_entry(f"Skipping collection without URL: {collection_name}", collections_status)
-                    enhanced_collections.append(collection)
-                    continue
-                
-                # Use fetch_all_tours_from_collection to enhance the collection
-                add_log_entry(f"Fetching detailed tour data from: {collection['url']}", collections_status)
-                enhanced_collection = fetch_all_tours_from_collection(adapter, collection['url'], collections_status)
-                
-                if enhanced_collection:
-                    # Ensure the enhanced collection preserves the original ID and other critical fields
-                    if 'id' not in enhanced_collection and 'id' in collection:
-                        enhanced_collection['id'] = collection['id']
-                    
-                    # Make sure creator info is preserved
-                    if 'creator' not in enhanced_collection and 'creator' in collection:
-                        enhanced_collection['creator'] = collection['creator']
-                    
-                    # Count how many tours were actually enhanced
-                    newly_enhanced_tours = 0
-                    if 'tours' in enhanced_collection:
-                        for tour in enhanced_collection['tours']:
-                            if (tour.get('distance_km') is not None or tour.get('distance') is not None) and not tour['name'].startswith(f"Tour {tour['id']}"):
-                                newly_enhanced_tours += 1
-                    
-                    # Explicitly mark as enhanced for UI state
-                    enhanced_collection['is_enhanced'] = (newly_enhanced_tours > 0)
-                    
-                    add_log_entry(f"Successfully enhanced collection '{collection_name}' with {newly_enhanced_tours} detailed tours", collections_status)
-                    enhanced_collections.append(enhanced_collection)
-                    total_enhanced_tours += newly_enhanced_tours
-                else:
-                    add_log_entry(f"Failed to enhance collection '{collection_name}', keeping original", collections_status)
-                    enhanced_collections.append(collection)
-                
-                # Update progress
-                enhanced_count += 1
-                with collections_lock:
-                    collections_status['collections_completed'] = enhanced_count
-                    collections_status['progress'] = enhanced_count / len(collections)
-                
-            except Exception as e:
-                add_log_entry(f"Error enhancing collection: {str(e)}", collections_status)
-                enhanced_collections.append(collection)  # Keep original if enhancement fails
-        
-        # Update final status
-        with collections_lock:
-            collections_status['status'] = 'completed'
-            collections_status['progress'] = 1.0
-            collections_status['results'] = enhanced_collections
-        
-        add_log_entry(f"Enhancement completed for {enhanced_count} collections with {total_enhanced_tours} total enhanced tours", collections_status)
-        
-        # Save the enhanced collections back to file
-        collections_manager.set_user_id(user_id)
-        success = collections_manager.save_collections_data(enhanced_collections, user_id, enhance_tours=True)
-        
-        if success:
-            add_log_entry(f"Successfully saved enhanced collections to files", collections_status)
-        else:
-            add_log_entry(f"Error saving enhanced collections to files", collections_status)
-        
-    except Exception as e:
-        # Handle any uncaught exceptions
-        error_msg = str(e)
-        logger.error(f"Error in collection enhancement thread: {error_msg}")
-        add_log_entry(f"Error: {error_msg}", collections_status)
-        
-        with collections_lock:
-            collections_status['status'] = 'error'
-            collections_status['error'] = error_msg
-
+# Run Flask app if this is the main module
 if __name__ == '__main__':
-    # Create directories if they don't exist
-    templates_dir = os.path.join(os.path.dirname(__file__), 'templates')
-    os.makedirs(templates_dir, exist_ok=True)
-    
-    static_dir = os.path.join(os.path.dirname(__file__), 'static')
-    os.makedirs(static_dir, exist_ok=True)
-    
-    exports_dir = os.path.join(static_dir, 'exports')
-    os.makedirs(exports_dir, exist_ok=True)
-    
-    # Set default download directory in user's home folder
-    default_download_dir = os.path.join(str(Path.home()), "komoot-takeout")
-    os.makedirs(default_download_dir, exist_ok=True)
-    set_selected_folder(default_download_dir)
-    
-    # Save the HTML to the templates directory if it exists in the current dir
-    if os.path.exists('index.html'):
-        with open(os.path.join(templates_dir, 'index.html'), 'w', encoding='utf-8') as f:
-            with open('index.html', 'r', encoding='utf-8') as src:
-                f.write(src.read())
-    
-    app.run(host='127.0.0.1', port=5001, debug=True)
+    app.run(debug=True, host='0.0.0.0', port=5001)
