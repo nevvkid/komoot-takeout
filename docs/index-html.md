@@ -82,7 +82,8 @@ function updateSelectedFolder() {
             document.querySelectorAll('.folder-selection-btn').forEach(btn => {
                 btn.style.display = isPywebview ? 'inline-block' : 'none';
             });
-        });
+        })
+        .catch(error => console.error('Error fetching selected folder:', error));
 }
 ```
 
@@ -116,14 +117,87 @@ function extractSlug(url, name) {
 }
 ```
 
-### Enhancement Status
+### Enhancement Status Detection
 
 Collections have enhancement status indicators that show whether they contain basic or detailed metadata:
 
+```javascript
+// Determine enhancement status
+let isEnhanced = false;
+
+// First check explicit flag
+if (collection.is_enhanced === true) {
+    isEnhanced = true;
+} else if (collection.tours && collection.tours.length > 0) {
+    // Otherwise check if tours have enhanced data
+    const enhancedTourCount = collection.tours.filter(tour => 
+        (tour.distance_km !== undefined || tour.distance !== undefined) && 
+        !tour.name.startsWith(`Tour ${tour.id}`)
+    ).length;
+    
+    const totalTours = collection.tours.length;
+    // Consider enhanced if > 80% of tours have enhanced data
+    isEnhanced = totalTours > 0 && enhancedTourCount / totalTours > 0.8;
+}
+
+// Add enhancement status to collection for easier reference
+collection.enhancementStatus = isEnhanced ? 'enhanced' : 'basic';
+collection.is_enhanced = isEnhanced; // Ensure both flags are set consistently
+```
+
+The UI identifies collections with:
 - **Basic**: Collections with minimal information (ID, name, URL)
 - **Enhanced**: Collections with complete metadata (distance, elevation, descriptions, etc.)
 
-The enhancement process allows users to upgrade basic collections to enhanced status.
+The enhancement process allows users to upgrade basic collections to enhanced status via the "Enhance Collections Metadata" button.
+
+## Collection Enhancement Process
+
+The interface includes a specialized enhancement process for collections:
+
+```javascript
+// Enhance Collections button click handler
+enhanceCollectionsBtn.addEventListener('click', async () => {
+    if (selectedCollections.length === 0) {
+        alert('Please select at least one collection to enhance');
+        return;
+    }
+    
+    // Get the user ID from the selected collections
+    let userId = null;
+    
+    // First try to get user ID from creator field
+    for (const collection of selectedCollections) {
+        if (collection.creator && collection.creator.id) {
+            userId = collection.creator.id;
+            break;
+        }
+    }
+    
+    // If no user ID found, try to extract from URL
+    if (!userId) {
+        for (const collection of selectedCollections) {
+            if (collection.url) {
+                const match = collection.url.match(/\/user\/([^\/]+)/);
+                if (match && match[1]) {
+                    userId = match[1];
+                    break;
+                }
+            }
+        }
+    }
+    
+    if (!userId) {
+        alert('Could not determine user ID from selected collections');
+        return;
+    }
+    
+    // Start the enhancement process
+    startCollectionEnhancement(userId);
+});
+```
+
+This feature intelligently extracts the user ID from collection metadata or URLs and uses it to fetch detailed information for all tours in the selected collections.
 
 ## Real-Time Updates
 
@@ -171,3 +245,5 @@ The UI interacts with several backend endpoints:
 - `/api/download-collection-tours`: Download tours from collections
 - `/api/select-folder`: Set output directory
 - `/api/selected-folder`: Get current output directory
+- `/api/clear`: Clear results data
+- `/api/clear-collections`: Clear collections data

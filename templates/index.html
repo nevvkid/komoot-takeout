@@ -495,7 +495,8 @@
                 <div class="p-3 bg-blue-100 text-blue-800 rounded-lg mb-4">
                     <p><strong>Workflow:</strong> 
                         1. Select collections from the table above 
-                        2. Choose to either enhance first (recommended for better metadata) or download directly
+                        2. Download directly with "Download Selected Collections"
+                        3. <em>Optional:</em> Use "Enhance Collections Metadata" first for additional tour details
                     </p>
                 </div>
                 
@@ -565,11 +566,11 @@
                 </div>
                 
                 <div class="flex gap-2 mb-4">
-                    <button id="enhance-collections-btn" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 hidden">
-                        Enhance Collections First
-                    </button>
                     <button id="download-collection-tours-btn" class="px-4 py-2 bg-4f840d text-white rounded-lg hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50">
                         Download Selected Collections
+                    </button>
+                    <button id="enhance-collections-btn" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 hidden">
+                        Enhance Collections Metadata
                     </button>
                 </div>
             </div>
@@ -1184,13 +1185,36 @@
         // Clear collections
         clearCollectionsBtn.addEventListener('click', async () => {
             try {
-                await fetch('/api/clear-collections', { method: 'POST' });
+                // First, reset any UI elements that might be active
+                if (collectionsStatusIntervalId) {
+                    clearInterval(collectionsStatusIntervalId);
+                    collectionsStatusIntervalId = null;
+                }
+                
+                // Reset selected collections array
+                selectedCollections = [];
+                
+                // Call the API to clear collections data on the server
+                const response = await fetch('/api/clear-collections', { method: 'POST' });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to clear collections');
+                }
+                
+                // Reset UI
                 collectionsResultsSection.classList.add('hidden');
                 downloadCollectionsSection.classList.add('hidden');
                 collectionsTableBody.innerHTML = '';
-                selectedCollections = [];
+                
+                // Reset any in-progress status
+                collectionsStatusSection.classList.add('hidden');
+                
+                // Show success message
+                alert('Collections cleared successfully');
+                
             } catch (error) {
                 console.error('Error clearing collections:', error);
+                alert('Error clearing collections: ' + error.message);
             }
         });
         
@@ -1319,6 +1343,8 @@
                 if (status.status === 'completed' || status.status === 'error') {
                     clearInterval(collectionsStatusIntervalId);
                     collectionsStatusIntervalId = null;
+                    
+                    // Enable buttons
                     scrapePublicBtn.disabled = false;
                     enhanceCollectionsBtn.disabled = false;
                     downloadCollectionToursBtn.disabled = false;
@@ -1335,7 +1361,18 @@
                             
                             // Show success message for enhancement
                             if (status.log && status.log.some(entry => entry.includes("Enhancement completed"))) {
-                                alert("Collections successfully enhanced! The status badges now show updated enhancement status.");
+                                const successMessage = document.createElement('div');
+                                successMessage.className = 'p-3 mb-4 bg-green-100 text-green-800 rounded-lg';
+                                successMessage.innerHTML = '<strong>Success!</strong> Collections have been enhanced with additional metadata.';
+                                
+                                // Insert the message before the collections table
+                                const resultsSection = document.getElementById('collections-results-section');
+                                resultsSection.insertBefore(successMessage, resultsSection.firstChild);
+                                
+                                // Remove the message after 10 seconds
+                                setTimeout(() => {
+                                    successMessage.remove();
+                                }, 10000);
                             }
                         }, 500);
                     }
@@ -1460,6 +1497,7 @@
                     
                     // Add enhancement status to collection for easier reference
                     collection.enhancementStatus = isEnhanced ? 'enhanced' : 'basic';
+                    collection.is_enhanced = isEnhanced; // Ensure both flags are set consistently
                     
                     // Create the badge
                     const badge = document.createElement('span');
@@ -1474,14 +1512,12 @@
                 // Show collections results section and download section
                 collectionsResultsSection.classList.remove('hidden');
                 downloadCollectionsSection.classList.remove('hidden');
-                enhanceCollectionsBtn.classList.remove('hidden');
-                
-                // Disable enhance button if all collections are already enhanced
-                const needsEnhancement = collections.some(collection => collection.enhancementStatus === 'basic');
-                enhanceCollectionsBtn.disabled = !needsEnhancement;
                 
                 // Update selected collections
                 selectedCollections = newSelectedCollections;
+                
+                // Update UI based on selected collections
+                updateSelectedCollections();
                 
             } catch (error) {
                 console.error('Error fetching collections:', error);
