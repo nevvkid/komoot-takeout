@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+ <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -107,6 +107,43 @@
         /* Desktop application specific styling */
         .desktop-only {
             display: none; /* Hidden by default, shown if in desktop app */
+        }
+        
+        /* Collection enhancement status badges */
+        .badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.375rem;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin: 0 auto;
+        }
+        .bg-secondary {
+            background-color: #e5e7eb;
+            color: #4b5563;
+        }
+        .bg-success {
+            background-color: #10b981;
+            color: white;
+        }
+        .bg-warning {
+            background-color: #f59e0b;
+            color: white;
+        }
+
+        /* Table cell styling */
+        .collection-name-link {
+            color: #3182ce;
+            text-decoration: none;
+        }
+        .collection-name-link:hover {
+            text-decoration: underline;
+        }
+        
+        td.status-cell {
+            text-align: center;
         }
     </style>
 </head>
@@ -440,6 +477,9 @@
                                 <th class="px-6 py-3 border-b border-gray-200 bg-gray-50 text-left text-xs leading-4 font-medium text-gray-500 uppercase tracking-wider">
                                     Tours
                                 </th>
+                                <th class="px-6 py-3 border-b border-gray-200 bg-gray-50 text-left text-xs leading-4 font-medium text-gray-500 uppercase tracking-wider">
+                                    Status
+                                </th>
                             </tr>
                         </thead>
                         <tbody id="collections-table-body">
@@ -451,6 +491,13 @@
 
             <div id="download-collections-section" class="mt-6 hidden">
                 <h3 class="text-lg font-semibold mb-4">Download Collection Tours</h3>
+                
+                <div class="p-3 bg-blue-100 text-blue-800 rounded-lg mb-4">
+                    <p><strong>Workflow:</strong> 
+                        1. Select collections from the table above 
+                        2. Choose to either enhance first (recommended for better metadata) or download directly
+                    </p>
+                </div>
                 
                 <!-- Modified Output Directory with Folder Selection -->
                 <div class="mb-4">
@@ -517,9 +564,14 @@
                     </div>
                 </div>
                 
-                <button id="download-collection-tours-btn" class="px-4 py-2 bg-4f840d text-white rounded-lg hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50">
-                    Download Selected Collections
-                </button>
+                <div class="flex gap-2 mb-4">
+                    <button id="enhance-collections-btn" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 hidden">
+                        Enhance Collections First
+                    </button>
+                    <button id="download-collection-tours-btn" class="px-4 py-2 bg-4f840d text-white rounded-lg hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50">
+                        Download Selected Collections
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -1017,12 +1069,12 @@
                     idCell.innerHTML = `<div class="text-sm leading-5 text-gray-900">${result.id}</div>`;
                     row.appendChild(idCell);
                     
-                    // Add tour name
+                    // Add tour name with clearer link styling
                     const nameCell = document.createElement('td');
                     nameCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200';
                     nameCell.innerHTML = `
                         <div class="text-sm leading-5 text-gray-900">
-                            <a href="${result.url}" target="_blank" class="text-blue-500 hover:underline truncate max-w-xs block">
+                            <a href="${result.url}" target="_blank" class="text-blue-600 hover:underline truncate max-w-xs inline-block">
                                 ${result.name}
                             </a>
                         </div>
@@ -1268,11 +1320,24 @@
                     clearInterval(collectionsStatusIntervalId);
                     collectionsStatusIntervalId = null;
                     scrapePublicBtn.disabled = false;
+                    enhanceCollectionsBtn.disabled = false;
+                    downloadCollectionToursBtn.disabled = false;
                     floatingProgress.classList.add('hidden');
                     
                     // If completed, fetch and display results
                     if (status.status === 'completed') {
-                        fetchAndDisplayCollections();
+                        // Store currently selected collection IDs before refreshing
+                        const selectedIds = selectedCollections.map(c => c.id);
+                        
+                        // Wait a moment to ensure the backend has finished writing all data
+                        setTimeout(() => {
+                            fetchAndDisplayCollections(selectedIds);
+                            
+                            // Show success message for enhancement
+                            if (status.log && status.log.some(entry => entry.includes("Enhancement completed"))) {
+                                alert("Collections successfully enhanced! The status badges now show updated enhancement status.");
+                            }
+                        }, 500);
                     }
                 }
                 
@@ -1282,93 +1347,187 @@
         }
         
         // Fetch and display collections
-        async function fetchAndDisplayCollections() {
+        async function fetchAndDisplayCollections(selectedIds = []) {
             try {
                 const response = await fetch('/api/collections-results');
-                
                 if (!response.ok) {
-                    return;
+                    throw new Error(`HTTP error ${response.status}`);
                 }
                 
                 const collections = await response.json();
                 
-                if (!collections || collections.length === 0) {
+                // Clear existing collections
+                collectionsTableBody.innerHTML = '';
+                
+                // We'll keep track of selected items after refresh
+                const newSelectedCollections = [];
+                
+                // Reset button states
+                clearCollectionsBtn.disabled = true;
+                downloadCollectionToursBtn.disabled = true;
+                
+                if (collections.length === 0) {
+                    collectionsTableBody.innerHTML = '<tr><td colspan="6" class="text-center">No collections found</td></tr>';
+                    selectedCollections = [];
                     return;
                 }
                 
-                // Clear previous results and selection
-                collectionsTableBody.innerHTML = '';
-                selectedCollections = [];
+                // Sort collections by name
+                collections.sort((a, b) => {
+                    const nameA = a.name || '';
+                    const nameB = b.name || '';
+                    return nameA.localeCompare(nameB);
+                });
                 
-                // Add each collection to the table
+                // Add collections to table
                 collections.forEach(collection => {
                     const row = document.createElement('tr');
                     
-                    // Add collection selection checkbox
-                    const selectCell = document.createElement('td');
-                    selectCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200';
+                    // Checkbox cell
+                    const checkboxCell = document.createElement('td');
+                    checkboxCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200';
+                    
                     const checkbox = document.createElement('input');
                     checkbox.type = 'checkbox';
-                    checkbox.className = 'form-checkbox h-5 w-5 text-blue-600';
+                    checkbox.classList.add('form-check-input');
                     checkbox.dataset.collectionId = collection.id;
-                    checkbox.addEventListener('change', () => {
-                        if (checkbox.checked) {
-                            selectedCollections.push(collection);
-                        } else {
-                            selectedCollections = selectedCollections.filter(c => c.id !== collection.id);
-                        }
-                        
-                        // Show/hide download section based on selection
-                        if (selectedCollections.length > 0) {
-                            downloadCollectionsSection.classList.remove('hidden');
-                        } else {
-                            downloadCollectionsSection.classList.add('hidden');
-                        }
-                    });
-                    selectCell.appendChild(checkbox);
-                    row.appendChild(selectCell);
                     
-                    // Add collection name
+                    // Check the box if this collection was previously selected
+                    if (selectedIds.includes(collection.id)) {
+                        checkbox.checked = true;
+                        newSelectedCollections.push(collection);
+                    }
+                    
+                    checkbox.addEventListener('change', function() {
+                        updateSelectedCollections();
+                    });
+                    checkboxCell.appendChild(checkbox);
+                    row.appendChild(checkboxCell);
+                    
+                    // Name cell
                     const nameCell = document.createElement('td');
                     nameCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200';
-                    nameCell.innerHTML = `
-                        <div class="text-sm leading-5 text-gray-900">
-                            <a href="${collection.url}" target="_blank" class="text-blue-500 hover:underline truncate max-w-xs block">
-                                View Collection
-                            </a>
-                        </div>
-                    `;
+                    
+                    const nameLink = document.createElement('a');
+                    nameLink.href = collection.url || '#';
+                    nameLink.target = '_blank';
+                    nameLink.className = 'text-blue-500 hover:underline';
+                    nameLink.textContent = collection.name || `Collection ${collection.id}`;
+                    nameCell.appendChild(nameLink);
                     row.appendChild(nameCell);
                     
-                    // Add collection ID
+                    // ID cell
                     const idCell = document.createElement('td');
                     idCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200';
-                    idCell.innerHTML = `<div class="text-sm leading-5 text-gray-900">${collection.id || '-'}</div>`;
+                    idCell.textContent = collection.id || '';
                     row.appendChild(idCell);
                     
-                    // Extract and add slug
-                    const slug = extractSlug(collection.url, collection.name);
+                    // Slug cell
                     const slugCell = document.createElement('td');
                     slugCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200';
-                    slugCell.innerHTML = `<div class="text-sm leading-5 text-gray-900">${slug || '-'}</div>`;
+                    const slug = collection.slug || extractSlug(collection.url, collection.name);
+                    slugCell.textContent = slug;
                     row.appendChild(slugCell);
                     
-                    // Add tours count
-                    const toursCell = document.createElement('td');
-                    toursCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200';
-                    toursCell.innerHTML = `<div class="text-sm leading-5 text-gray-900">${collection.tours ? collection.tours.length : 0}</div>`;
-                    row.appendChild(toursCell);
+                    // Tours count cell
+                    const toursCountCell = document.createElement('td');
+                    toursCountCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200';
+                    const toursCount = collection.tours_count || collection.tours?.length || 0;
+                    toursCountCell.textContent = toursCount;
+                    row.appendChild(toursCountCell);
                     
-                    // Add row to table
+                    // Enhanced status cell
+                    const enhancedCell = document.createElement('td');
+                    enhancedCell.className = 'px-6 py-4 whitespace-nowrap border-b border-gray-200 text-center';
+                    
+                    // Determine enhancement status
+                    let isEnhanced = false;
+                    
+                    // First check explicit flag
+                    if (collection.is_enhanced === true) {
+                        isEnhanced = true;
+                    } else if (collection.tours && collection.tours.length > 0) {
+                        // Otherwise check if tours have enhanced data
+                        const enhancedTourCount = collection.tours.filter(tour => 
+                            (tour.distance_km !== undefined || tour.distance !== undefined) && 
+                            !tour.name.startsWith(`Tour ${tour.id}`)
+                        ).length;
+                        
+                        const totalTours = collection.tours.length;
+                        // Consider enhanced if > 80% of tours have enhanced data
+                        isEnhanced = totalTours > 0 && enhancedTourCount / totalTours > 0.8;
+                    }
+                    
+                    // Add enhancement status to collection for easier reference
+                    collection.enhancementStatus = isEnhanced ? 'enhanced' : 'basic';
+                    
+                    // Create the badge
+                    const badge = document.createElement('span');
+                    badge.className = isEnhanced ? 'badge bg-success' : 'badge bg-secondary';
+                    badge.textContent = isEnhanced ? 'ENHANCED' : 'BASIC';
+                    enhancedCell.appendChild(badge);
+                    row.appendChild(enhancedCell);
+                    
                     collectionsTableBody.appendChild(row);
                 });
                 
-                // Show results section
+                // Show collections results section and download section
                 collectionsResultsSection.classList.remove('hidden');
+                downloadCollectionsSection.classList.remove('hidden');
+                enhanceCollectionsBtn.classList.remove('hidden');
+                
+                // Disable enhance button if all collections are already enhanced
+                const needsEnhancement = collections.some(collection => collection.enhancementStatus === 'basic');
+                enhanceCollectionsBtn.disabled = !needsEnhancement;
+                
+                // Update selected collections
+                selectedCollections = newSelectedCollections;
                 
             } catch (error) {
                 console.error('Error fetching collections:', error);
+                collectionsTableBody.innerHTML = `<tr><td colspan="6" class="text-center">Error fetching collections: ${error.message}</td></tr>`;
             }
+        }
+        
+        // Function to update selected collections
+        function updateSelectedCollections() {
+            // Get all checked checkboxes
+            const checkedBoxes = document.querySelectorAll('#collections-table-body input.form-check-input:checked');
+            
+            // Clear selected collections array
+            selectedCollections = [];
+            
+            // Get the collections data from the server
+            fetch('/api/collections-results')
+                .then(response => response.json())
+                .then(collections => {
+                    // Filter collections based on checked boxes
+                    checkedBoxes.forEach(checkbox => {
+                        const collectionId = checkbox.dataset.collectionId;
+                        const collection = collections.find(c => c.id === collectionId);
+                        if (collection) {
+                            selectedCollections.push(collection);
+                        }
+                    });
+                    
+                    // Update UI based on selections
+                    clearCollectionsBtn.disabled = selectedCollections.length === 0;
+                    downloadCollectionToursBtn.disabled = selectedCollections.length === 0;
+                    
+                    // Update enhance button visibility
+                    const hasEnhanceableCollections = selectedCollections.some(collection => 
+                        collection.enhancementStatus === 'basic' || !collection.is_enhanced
+                    );
+                    
+                    if (hasEnhanceableCollections && selectedCollections.length > 0) {
+                        enhanceCollectionsBtn.classList.remove('hidden');
+                    } else {
+                        enhanceCollectionsBtn.classList.add('hidden');
+                    }
+                })
+                .catch(error => {
+                    console.error('Error updating selected collections:', error);
+                });
         }
         
         // Start downloading collection tours
@@ -1462,6 +1621,108 @@
                 btn.style.display = isPywebview ? 'inline-block' : 'none';
             });
         });
+
+        // Enhance Collections button
+        const enhanceCollectionsBtn = document.getElementById('enhance-collections-btn');
+        
+        // Function to update Enhance button visibility
+        function updateEnhanceButtonVisibility() {
+            // Check if we have any collections that need enhancement
+            const hasEnhanceableCollections = selectedCollections.some(collection => 
+                collection.enhancementStatus === 'basic' || collection.enhancementStatus === 'partial'
+            );
+            
+            // Only show the enhance button if there are collections that need enhancement
+            if (hasEnhanceableCollections && selectedCollections.length > 0) {
+                enhanceCollectionsBtn.classList.remove('hidden');
+            } else {
+                enhanceCollectionsBtn.classList.add('hidden');
+            }
+        }
+        
+        // Enhance Collections button click handler
+        enhanceCollectionsBtn.addEventListener('click', async () => {
+            if (selectedCollections.length === 0) {
+                alert('Please select at least one collection to enhance');
+                return;
+            }
+            
+            // Get the user ID from the selected collections
+            let userId = null;
+            
+            // First try to get user ID from creator field
+            for (const collection of selectedCollections) {
+                if (collection.creator && collection.creator.id) {
+                    userId = collection.creator.id;
+                    break;
+                }
+            }
+            
+            // If no user ID found, try to extract from URL
+            if (!userId) {
+                for (const collection of selectedCollections) {
+                    if (collection.url) {
+                        const match = collection.url.match(/\/user\/([^\/]+)/);
+                        if (match && match[1]) {
+                            userId = match[1];
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            if (!userId) {
+                alert('Could not determine user ID from selected collections');
+                return;
+            }
+            
+            // Start the enhancement process
+            startCollectionEnhancement(userId);
+        });
+        
+        // Start collection enhancement process
+        async function startCollectionEnhancement(userId) {
+            try {
+                // Reset and show status section
+                collectionsStatusSection.classList.remove('hidden');
+                collectionsStatusText.textContent = 'Starting enhancement...';
+                collectionsStatusPercent.textContent = '0%';
+                collectionsStatusBar.style.width = '0%';
+                collectionsStatusCompleted.textContent = '0';
+                collectionsStatusTotal.textContent = '0';
+                collectionsLogContent.innerHTML = '';
+                floatingProgress.classList.remove('hidden');
+                
+                // Disable buttons during processing
+                enhanceCollectionsBtn.disabled = true;
+                downloadCollectionToursBtn.disabled = true;
+                
+                // Start the enhancement process
+                const response = await fetch('/api/enhance-collections', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId })
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Failed to start enhancement');
+                }
+                
+                // Start polling for status updates
+                if (collectionsStatusIntervalId) {
+                    clearInterval(collectionsStatusIntervalId);
+                }
+                
+                collectionsStatusIntervalId = setInterval(checkCollectionsStatus, 1000);
+                
+            } catch (error) {
+                alert('Error starting enhancement: ' + error.message);
+                enhanceCollectionsBtn.disabled = false;
+                downloadCollectionToursBtn.disabled = false;
+                floatingProgress.classList.add('hidden');
+            }
+        }
     </script>
 </body>
 </html>

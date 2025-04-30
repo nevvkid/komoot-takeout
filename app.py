@@ -344,15 +344,19 @@ class CollectionManager:
                 logger.info("Saving collections without tour enhancement")
                 enhanced_collections = collections.copy()
             
-            # Save all collections to a single JSON file
-            json_path = os.path.join(self.output_dir, f"all_collections.json")
-            with open(json_path, 'w', encoding='utf-8') as f:
+            # Save collections to JSON files
+            # Always save to the standard all_collections.json file
+            standard_json_path = os.path.join(self.output_dir, "all_collections.json")
+            with open(standard_json_path, 'w', encoding='utf-8') as f:
                 json.dump(enhanced_collections, f, indent=2, ensure_ascii=False)
+            logger.info(f"Saved collections to {standard_json_path}")
             
-            # Create timestamped copy
-            timestamped_json_path = os.path.join(self.output_dir, f"all_collections_{timestamp}.json")
+            # Also save a timestamped version (this is useful for versioning)
+            status_suffix = "_enhanced" if enhance_tours else "_basic"
+            timestamped_json_path = os.path.join(self.output_dir, f"all_collections_{timestamp}{status_suffix}.json")
             with open(timestamped_json_path, 'w', encoding='utf-8') as f:
                 json.dump(enhanced_collections, f, indent=2, ensure_ascii=False)
+            logger.info(f"Saved timestamped collections to {timestamped_json_path}")
             
             # Create separate CSV files for each collection's tours with enhanced metadata
             for collection in enhanced_collections:
@@ -2469,7 +2473,7 @@ def scrape_public_collections_thread(collection_urls):
                                                         detailed_collections.append(collection)
                                             except Exception as e:
                                                 add_log_entry(f"Error fetching details for collection {collection.get('name', 'Unknown')}: {str(e)}", collections_status)
-                                                detailed_collections.append(collection)
+                                                detailed_collections.append(collection)  # Keep original if enhancement fails
                                                 
                                         return {
                                             'user_id': page_user_id,
@@ -3115,19 +3119,24 @@ def enhance_collections_thread(collections_file, user_id):
         # Enhance each collection one by one
         enhanced_collections = []
         enhanced_count = 0
+        total_enhanced_tours = 0
         
         for i, collection in enumerate(collections):
             try:
                 collection_name = collection.get('name', f"Collection {i+1}")
                 add_log_entry(f"Enhancing collection {i+1}/{len(collections)}: {collection_name}", collections_status)
                 
-                # Skip collections that appear to be already enhanced
+                # Check if collection is already enhanced by looking for key indicators of enhanced tour data
                 tour_count = len(collection.get('tours', []))
-                enhanced_tour_count = sum(1 for tour in collection.get('tours', []) 
-                                         if not tour.get('name', '').startswith(f"Tour {tour.get('id', '')}"))
+                already_enhanced_count = sum(1 for tour in collection.get('tours', []) 
+                                         if (tour.get('distance_km') is not None or tour.get('distance') is not None) and
+                                         not tour.get('name', '').startswith(f"Tour {tour.get('id', '')}"))
                 
-                if tour_count > 0 and enhanced_tour_count / tour_count > 0.8:
-                    add_log_entry(f"Collection appears to be already enhanced ({enhanced_tour_count}/{tour_count} enhanced tours)", collections_status)
+                if tour_count > 0 and already_enhanced_count / tour_count > 0.8:
+                    add_log_entry(f"Collection '{collection_name}' already enhanced ({already_enhanced_count}/{tour_count} enhanced tours)", collections_status)
+                    # Mark as explicitly enhanced for UI state
+                    if 'is_enhanced' not in collection:
+                        collection['is_enhanced'] = True
                     enhanced_collections.append(collection)
                     enhanced_count += 1
                     
@@ -3145,13 +3154,33 @@ def enhance_collections_thread(collections_file, user_id):
                     continue
                 
                 # Use fetch_all_tours_from_collection to enhance the collection
+                add_log_entry(f"Fetching detailed tour data from: {collection['url']}", collections_status)
                 enhanced_collection = fetch_all_tours_from_collection(adapter, collection['url'], collections_status)
                 
                 if enhanced_collection:
-                    add_log_entry(f"Successfully enhanced collection with {len(enhanced_collection.get('tours', []))} tours", collections_status)
+                    # Ensure the enhanced collection preserves the original ID and other critical fields
+                    if 'id' not in enhanced_collection and 'id' in collection:
+                        enhanced_collection['id'] = collection['id']
+                    
+                    # Make sure creator info is preserved
+                    if 'creator' not in enhanced_collection and 'creator' in collection:
+                        enhanced_collection['creator'] = collection['creator']
+                    
+                    # Count how many tours were actually enhanced
+                    newly_enhanced_tours = 0
+                    if 'tours' in enhanced_collection:
+                        for tour in enhanced_collection['tours']:
+                            if (tour.get('distance_km') is not None or tour.get('distance') is not None) and not tour['name'].startswith(f"Tour {tour['id']}"):
+                                newly_enhanced_tours += 1
+                    
+                    # Explicitly mark as enhanced for UI state
+                    enhanced_collection['is_enhanced'] = (newly_enhanced_tours > 0)
+                    
+                    add_log_entry(f"Successfully enhanced collection '{collection_name}' with {newly_enhanced_tours} detailed tours", collections_status)
                     enhanced_collections.append(enhanced_collection)
+                    total_enhanced_tours += newly_enhanced_tours
                 else:
-                    add_log_entry(f"Failed to enhance collection, keeping original", collections_status)
+                    add_log_entry(f"Failed to enhance collection '{collection_name}', keeping original", collections_status)
                     enhanced_collections.append(collection)
                 
                 # Update progress
@@ -3170,11 +3199,11 @@ def enhance_collections_thread(collections_file, user_id):
             collections_status['progress'] = 1.0
             collections_status['results'] = enhanced_collections
         
-        add_log_entry(f"Enhancement completed for {enhanced_count} collections", collections_status)
+        add_log_entry(f"Enhancement completed for {enhanced_count} collections with {total_enhanced_tours} total enhanced tours", collections_status)
         
         # Save the enhanced collections back to file
         collections_manager.set_user_id(user_id)
-        success = collections_manager.save_collections_data(enhanced_collections, user_id)
+        success = collections_manager.save_collections_data(enhanced_collections, user_id, enhance_tours=True)
         
         if success:
             add_log_entry(f"Successfully saved enhanced collections to files", collections_status)
