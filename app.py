@@ -109,7 +109,7 @@ def get_default_output_dir(subdirectory=''):
     base_dir = get_selected_folder()
         
     # Create the full path including the subdirectory if provided
-    if subdirectory:
+    if (subdirectory):
         output_dir = os.path.join(base_dir, subdirectory)
     else:
         output_dir = base_dir
@@ -384,7 +384,7 @@ class CollectionManager:
                     csv_tours = []
                     
                     # Post-process tours with enhanced fields
-                    for i, tour in deduplicated_tours:
+                    for tour in deduplicated_tours:
                         # Create standardized tour object
                         distance_km = tour.get('distance_km', tour.get('distance', 0)/1000 if tour.get('distance', 0) else 0)
                         
@@ -2720,6 +2720,22 @@ def scrape_public_collections_thread(collection_urls):
         with collections_lock:
             collections_status['status'] = 'error'
             collections_status['error'] = error_msg
+
+def download_collection_tours_thread(collections, output_dir, include_metadata, output_dir_structure, download_images, gpx_options, user_id):
+    """Download all tours in a collection as GPX files"""
+    try:
+        with processing_lock:
+            processing_status['status'] = 'running'
+            
+        # Log parameters for debugging
+        add_log_entry(f"Starting collection tours download with parameters:", processing_status)
+        add_log_entry(f"- Output directory: {output_dir}", processing_status)
+        add_log_entry(f"- Include metadata: {include_metadata}", processing_status)
+        add_log_entry(f"- Output directory structure: {output_dir_structure}", processing_status)
+        add_log_entry(f"- Download images: {download_images}", processing_status)
+        add_log_entry(f"- User ID: {user_id}", processing_status)
+        add_log_entry(f"- GPX options: {gpx_options}", processing_status)
+        
         # Log the user ID we received
         add_log_entry(f"Starting download with user ID: {user_id}", processing_status)
         
@@ -3047,20 +3063,20 @@ def scrape_public_collections_thread(collection_urls):
                                 "distance_km": f"{distance_km:.1f}" if distance_km else "",
                                 "distance_mi": f"{distance_km * 0.621371:.1f}" if distance_km else "",
                                 "duration": f"{result.get('duration', 0):.1f}" if result.get('duration') else "",
-                                "unpaved_percentage": "",  # Not readily available
-                                "singletrack_percentage": "",  # Not readily available
-                                "rideable_percentage": "",  # Not readily available
+                                "unpaved_percentage": result.get('unpaved_percentage', ''),
+                                "singletrack_percentage": result.get('singletrack_percentage', ''),
+                                "rideable_percentage": result.get('rideable_percentage', ''),
                                 "total_ascent": result.get('elevation_up', ''),
                                 "total_descent": result.get('elevation_down', ''),
-                                "high_point": "",  # Not readily available
-                                "country": "",  # Not readily available
-                                "region": "",  # Not readily available
+                                "high_point": result.get('high_point', ''),
+                                "country": result.get('country', ''),
+                                "region": collection.get('region', ''),
                                 "collection_name": collection_name,
                                 "collection_id": collection_id,
                                 "sport_type": result.get('sport', ''),
-                                "description": "",  # Not readily available in this context
-                                "url": result.get('url', ''),
-                                "gpx_url": "",  # Generated locally
+                                "description": result.get('description', ''),
+                                "url": result.get('url', f"https://www.komoot.com/tour/{result.get('id', '')}"),
+                                "gpx_url": result.get('gpx_url', ''),
                                 "image_url": result.get('images', [''])[0] if result.get('images') else '',
                                 "collection_cover_image": collection.get('cover_image_url', ''),
                                 "date_created": result.get('date', '')

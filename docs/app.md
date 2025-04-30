@@ -345,7 +345,48 @@ selected_folder/
 │   │           ├── collection_info.txt   # Human-readable metadata
 │   │           ├── {collection_slug}_tours.csv  # Tour data in CSV
 │   │           └── [GPX files]  # Individual tour GPX files
+├── tours/                    # Organized tour downloads
+│   └── user-{user_id}/       # User-specific tours
+│       ├── recorded_tours/   # Tours that were recorded
+│       └── planned_tours/    # Tours that were planned
 ```
+
+### Tour Download Organization
+
+The application implements a hierarchical directory structure for tour downloads:
+
+```python
+# Set up hierarchical directory structure
+base_dir = get_selected_folder()
+tours_dir = os.path.join(base_dir, 'tours')
+user_dir = os.path.join(tours_dir, f"user-{user_id}")
+recorded_dir = os.path.join(user_dir, 'recorded_tours')
+planned_dir = os.path.join(user_dir, 'planned_tours')
+```
+
+This organization separates tours by:
+
+1. **User ID**: Each user's tours are stored in a separate folder
+2. **Tour Type**: Tours are automatically categorized as either recorded or planned
+3. **Custom Directory Support**: Users can override the default structure and specify a custom output directory
+
+When downloading tours, the application automatically:
+- Determines if a tour is recorded or planned by inspecting the `sport` field
+- Routes tours to the appropriate directory
+- Creates all necessary subdirectories
+- Logs the directory structure for user reference
+
+Example log output:
+```
+[10:15:23] Created hierarchical directory structure:
+[10:15:23] - Base directory: /Users/username/komoot-takeout
+[10:15:23] - Tours directory: /Users/username/komoot-takeout/tours
+[10:15:23] - User directory: /Users/username/komoot-takeout/tours/user-12345678
+[10:15:23] - Recorded tours directory: /Users/username/komoot-takeout/tours/user-12345678/recorded_tours
+[10:15:23] - Planned tours directory: /Users/username/komoot-takeout/tours/user-12345678/planned_tours
+```
+
+This organization makes it easy to browse and manage tour downloads, especially for users with large numbers of tours.
 
 ## Two-Step Collection Enhancement
 
