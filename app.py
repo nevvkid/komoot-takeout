@@ -608,32 +608,6 @@ collections:
         except Exception as e:
             logger.error(f"Error generating Jekyll config: {str(e)}")
             return False
-    
-    def get_collections_zip(self):
-        """Create a zip file with all collection data"""
-        try:
-            # Check if there are any files to zip
-            if not os.path.exists(self.base_output_dir):
-                return None
-                
-            # Create a BytesIO object to store the zip file
-            zip_buffer = BytesIO()
-            
-            # Create a ZIP file
-            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                for root, _, files in os.walk(self.base_output_dir):
-                    for file in files:
-                        file_path = os.path.join(root, file)
-                        arcname = os.path.relpath(file_path, os.path.dirname(self.base_output_dir))
-                        zipf.write(file_path, arcname)
-            
-            # Reset file pointer to beginning
-            zip_buffer.seek(0)
-            return zip_buffer
-            
-        except Exception as e:
-            logger.error(f"Error creating collections zip: {str(e)}")
-            return None
 
 # Create instance of CollectionManager
 collections_manager = CollectionManager()
@@ -1597,74 +1571,9 @@ def download_tour(tour_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/export/all', methods=['GET'])
-def export_all():
-    """Export all results as a ZIP file"""
-    try:
-        # Get the results
-        with processing_lock:
-            results = processing_status['results']
-            
-        if not results:
-            return jsonify({'error': 'No results available'}), 404
-            
-        # Create a BytesIO object to store the zip file
-        zip_buffer = BytesIO()
-        
-        # Create a ZIP file
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            # Add each GPX file to the ZIP
-            for result in results:
-                if result.get('output_dir') and result.get('filename'):
-                    gpx_file_path = os.path.join(result['output_dir'], result['filename'])
-                    if os.path.exists(gpx_file_path):
-                        arcname = result['filename'] 
-                        zipf.write(gpx_file_path, arcname)
-            
-            # Add results JSON
-            zipf.writestr('results.json', json.dumps(results, indent=2))
-            
-            # Add results CSV
-            csv_data = []
-            for tour in results:
-                csv_tour = {}
-                for key, value in tour.items():
-                    if key != 'images':  # Skip images array
-                        csv_tour[key] = value
-                csv_data.append(csv_tour)
-                
-            if csv_data:
-                csv_buffer = BytesIO()
-                fieldnames = csv_data[0].keys()
-                
-                # Write CSV data
-                writer = csv.DictWriter(csv_buffer, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerows(csv_data)
-                
-                # Add CSV to zip
-                zipf.writestr('results.csv', csv_buffer.getvalue().decode('utf-8'))
-        
-        # Reset file pointer to beginning
-        zip_buffer.seek(0)
-        
-        # Set the filename with current date
-        filename = f"komoot_gpx_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
-        
-        # Return the ZIP file
-        return send_file(
-            zip_buffer,
-            mimetype='application/zip',
-            as_attachment=True,
-            download_name=filename
-        )
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
 @app.route('/api/export/images/<tour_id>', methods=['GET'])
 def export_images(tour_id):
-    """Export all images for a specific tour"""
+    """Export all images for a specific tour as individual files"""
     try:
         # Get base image directory
         base_dir = get_default_output_dir('images')
@@ -1673,32 +1582,22 @@ def export_images(tour_id):
         images_dir = os.path.join(base_dir, str(tour_id))
         if not os.path.exists(images_dir):
             return jsonify({'error': 'No images found for this tour'}), 404
-            
-        # Create a BytesIO object to store the zip file
-        zip_buffer = BytesIO()
+
+        # Get list of image files
+        image_files = []
+        for root, _, files in os.walk(images_dir):
+            for file in files:
+                file_path = os.path.join(root, file)
+                image_files.append({
+                    'path': file_path,
+                    'filename': os.path.basename(file_path)
+                })
         
-        # Create a ZIP file
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            # Add each image file to the ZIP
-            for root, _, files in os.walk(images_dir):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    arcname = os.path.basename(file_path)
-                    zipf.write(file_path, arcname)
-        
-        # Reset file pointer to beginning
-        zip_buffer.seek(0)
-        
-        # Set the filename with tour ID
-        filename = f"tour_{tour_id}_images.zip"
-        
-        # Return the ZIP file
-        return send_file(
-            zip_buffer,
-            mimetype='application/zip',
-            as_attachment=True,
-            download_name=filename
-        )
+        # Return the list of images
+        return jsonify({
+            'tour_id': tour_id,
+            'images': image_files
+        })
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -1859,27 +1758,8 @@ def clear_collections():
 
 @app.route('/api/export/collections', methods=['GET'])
 def export_collections():
-    """Export all collection data as a ZIP file"""
-    try:
-        # Get the collections zip
-        zip_buffer = collections_manager.get_collections_zip()
-        
-        if not zip_buffer:
-            return jsonify({'error': 'No collections data available'}), 404
-        
-        # Set the filename with current date
-        filename = f"komoot_collections_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
-        
-        # Return the ZIP file
-        return send_file(
-            zip_buffer,
-            mimetype='application/zip',
-            as_attachment=True,
-            download_name=filename
-        )
-        
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    """Function is not used - collections export as ZIP is no longer supported"""
+    return jsonify({'error': 'Collections export as ZIP is no longer supported. Access individual files directly.'}), 404
 
 @app.route('/api/download-collection-tours', methods=['POST'])
 def download_collection_tours():

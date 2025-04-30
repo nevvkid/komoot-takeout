@@ -42,7 +42,6 @@ The application relies on several key libraries:
 The `CollectionManager` class handles all collection-related operations:
 - Saving collection data to JSON and CSV files
 - Generating Jekyll configuration files from collections
-- Creating ZIP archives of collection data
 - Organizing data by user ID
 
 ### Tour Extraction and Processing
@@ -68,8 +67,7 @@ The `CollectionManager` class handles all collection-related operations:
 - `GET /api/results`: Returns the results of tour processing
 - `POST /api/clear`: Clears current results
 - `GET /api/download/<tour_id>`: Downloads a specific tour as GPX
-- `GET /api/export/all`: Exports all tours as a ZIP file
-- `GET /api/export/images/<tour_id>`: Exports images for a specific tour
+- `GET /api/export/images/<tour_id>`: Returns a list of images for a specific tour
 - `POST /api/tour-counts`: Counts tours for a user
 
 #### Collection Processing Endpoints
@@ -79,7 +77,6 @@ The `CollectionManager` class handles all collection-related operations:
 - `GET /api/collections-status`: Returns the collection processing status
 - `GET /api/collections-results`: Returns collection processing results
 - `POST /api/clear-collections`: Clears collection results
-- `GET /api/export/collections`: Exports all collections as a ZIP file
 - `POST /api/download-collection-tours`: Downloads all tours in specified collections
 - `GET /api/export/collection/<collection_id>/csv`: Exports a collection as CSV
 
@@ -104,7 +101,7 @@ The `CollectionManager` class handles all collection-related operations:
    - Handles pagination for large collections
    - Processes metadata (cover images, descriptions, etc.)
    - Downloads all tours in the collection if requested
-4. Results can be exported as JSON, CSV, or ZIP files
+4. Results can be exported as JSON or CSV files
 
 ## Error Handling
 

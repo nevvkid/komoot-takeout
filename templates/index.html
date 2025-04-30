@@ -1075,15 +1075,6 @@
                             <a href="/api/download/${result.id}" class="text-blue-500 hover:text-blue-700">Download</a>
                     `;
                     
-                    // Add images download if available
-                    if (result.images && result.images.length > 0) {
-                        actionsContent += `
-                            <a href="/api/export/images/${result.id}" class="text-blue-500 hover:text-blue-700">
-                                Images (${result.images.length})
-                            </a>
-                        `;
-                    }
-                    
                     // Add open folder action if in pywebview
                     if (isPywebview && result.output_dir) {
                         actionsContent += `
