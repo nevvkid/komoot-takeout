@@ -40,7 +40,74 @@ The adapter provides robust collection handling:
 - Export capabilities to JSON and CSV formats
 - Tour name enhancement for better readability in exports
 
-### GPX Generation
+## Two-Step Collection Enhancement
+
+The module provides a flexible approach to collection enhancement that can be performed in two separate steps:
+
+1. **Basic Collection Retrieval**: Initial fast scraping to gather basic collection metadata
+2. **Detailed Tour Enhancement**: Optional second step to add comprehensive tour details
+
+### Tour Enhancement Process
+
+The `enhance_collection_tours()` method handles enriching tour data in collections:
+
+```python
+def enhance_collection_tours(self, collection, max_tours=None):
+    """Enhance tour data in a collection with full details
+    
+    Args:
+        collection: The collection to enhance
+        max_tours: Maximum number of tours to enhance (to avoid long processing times)
+        
+    Returns:
+        Enhanced collection with detailed tour data
+    """
+```
+
+The enhancement process intelligently:
+- Skips tours that are already enhanced
+- Attempts multiple strategies to retrieve tour data
+- Falls back gracefully when tour data is unavailable
+- Limits processing to a configurable number of tours to prevent timeouts
+
+### Enhancement Detection
+
+The enhancement system can detect which tours have already been enhanced:
+
+```python
+# Check if tour already has detailed data
+if not tour['name'].startswith("Tour ") and 'distance_km' in tour:
+    logger.info(f"Tour {tour_id} already has detailed data, skipping")
+    enhanced_tours.append(tour)
+    continue
+```
+
+### Enhancement Strategies
+
+The module employs multiple strategies for tour enhancement:
+
+1. **HTML Scraping**: First tries to scrape tour pages for faster access:
+```python
+# First try HTML scraping as it's faster
+try:
+    full_tour = self._scrape_tour_page(tour_id)
+    logger.info(f"Retrieved tour data via scraping for {tour_id}")
+except Exception as scrape_err:
+    logger.warning(f"Error scraping tour page: {str(scrape_err)}")
+```
+
+2. **API Access**: Falls back to API calls for comprehensive data:
+```python
+# If scraping failed, try API call
+if not full_tour or full_tour['name'] == f"Tour {tour_id}":
+    try:
+        full_tour = self.fetch_tour(tour_id, anonymous=True)
+        logger.info(f"Retrieved tour data via API for {tour_id}")
+    except Exception as api_err:
+        logger.warning(f"Error fetching tour via API: {str(api_err)}")
+```
+
+## GPX Generation
 
 The module offers several strategies for GPX generation:
 1. Using the KomootGPX external tool if available
@@ -75,7 +142,7 @@ adapter.make_gpx(
 )
 ```
 
-### Collection Management
+### Collection Management and Enhancement
 
 ```python
 # Fetch user collections

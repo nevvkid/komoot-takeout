@@ -291,8 +291,17 @@ class CollectionManager:
         else:
             self.output_dir = self.base_output_dir
         
-    def save_collections_data(self, collections, user_id=None):
-        """Save collections data to JSON and CSV files with enhanced formatting"""
+    def save_collections_data(self, collections, user_id=None, enhance_tours=False):
+        """Save collections data to JSON and CSV files with enhanced formatting
+        
+        Args:
+            collections: List of collections to save
+            user_id: Optional user ID for organizing files
+            enhance_tours: Whether to enhance tour data (can be time-consuming)
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
         try:
             logger.info(f"Saving data for {len(collections)} collections")
             
@@ -316,18 +325,24 @@ class CollectionManager:
             
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             
-            # Enhance tour data for all collections
-            enhanced_collections = []
-            for collection in collections:
-                try:
-                    # Use KomootAdapter to enhance each collection's tours
-                    adapter = KomootAdapter()
-                    enhanced_collection = adapter.enhance_collection_tours(collection, max_tours=None)
-                    enhanced_collections.append(enhanced_collection)
-                    logger.info(f"Enhanced tour data for collection: {collection['name']}")
-                except Exception as e:
-                    logger.warning(f"Error enhancing collection {collection.get('name', 'Unknown')}: {str(e)}")
-                    enhanced_collections.append(collection)  # Use original if enhancement fails
+            # Only enhance tour data if explicitly requested
+            if enhance_tours:
+                logger.info("Enhancing tour data for all collections (this may take some time)")
+                enhanced_collections = []
+                for collection in collections:
+                    try:
+                        # Use KomootAdapter to enhance each collection's tours
+                        adapter = KomootAdapter()
+                        enhanced_collection = adapter.enhance_collection_tours(collection, max_tours=None)
+                        enhanced_collections.append(enhanced_collection)
+                        logger.info(f"Enhanced tour data for collection: {collection['name']}")
+                    except Exception as e:
+                        logger.warning(f"Error enhancing collection {collection.get('name', 'Unknown')}: {str(e)}")
+                        enhanced_collections.append(collection)  # Use original if enhancement fails
+            else:
+                # Use original collections without enhancement
+                logger.info("Saving collections without tour enhancement")
+                enhanced_collections = collections.copy()
             
             # Save all collections to a single JSON file
             json_path = os.path.join(self.output_dir, f"all_collections.json")
@@ -3022,6 +3037,159 @@ def download_collection_tours_thread(collections, output_dir, include_metadata, 
         with processing_lock:
             processing_status['status'] = 'error'
             processing_status['error'] = error_msg
+
+@app.route('/api/enhance-collections', methods=['POST'])
+def enhance_saved_collections():
+    """Enhance previously saved collections with detailed tour data"""
+    try:
+        # Get parameters from request
+        data = request.json
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+            
+        # Get user ID - required to locate the saved collections
+        user_id = data.get('userId')
+        if not user_id:
+            return jsonify({'error': 'User ID is required to locate saved collections'}), 400
+            
+        # Set the output directory path
+        output_dir = get_default_output_dir('collections')
+        user_dir = os.path.join(output_dir, f"user-{user_id}")
+        
+        # Check if the user directory exists
+        if not os.path.exists(user_dir):
+            return jsonify({'error': f'No saved collections found for user ID: {user_id}'}), 404
+            
+        # Path to the saved collections JSON file
+        collections_file = os.path.join(user_dir, 'all_collections.json')
+        if not os.path.exists(collections_file):
+            return jsonify({'error': f'No collections JSON file found in {user_dir}'}), 404
+            
+        logger.info(f"Starting enhancement of saved collections for user ID: {user_id}")
+        
+        # Reset collections status
+        with collections_lock:
+            reset_status(collections_status)
+            collections_status['status'] = 'running'
+            add_log_entry(f"Loading saved collections from: {collections_file}", collections_status)
+        
+        # Start a background thread for the enhancement process
+        threading.Thread(
+            target=enhance_collections_thread,
+            args=(collections_file, user_id)
+        ).start()
+        
+        return jsonify({
+            'success': True, 
+            'message': 'Enhancement of saved collections started',
+            'statusEndpoint': '/api/collections-status'
+        })
+        
+    except Exception as e:
+        logger.error(f"Error starting collection enhancement: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+def enhance_collections_thread(collections_file, user_id):
+    """Background thread to enhance previously saved collections with detailed tour data"""
+    try:
+        # Load collections from the JSON file
+        try:
+            with open(collections_file, 'r', encoding='utf-8') as f:
+                collections = json.load(f)
+            
+            add_log_entry(f"Loaded {len(collections)} collections from file", collections_status)
+        except Exception as e:
+            add_log_entry(f"Error loading collections file: {str(e)}", collections_status)
+            with collections_lock:
+                collections_status['status'] = 'error'
+                collections_status['error'] = f"Failed to load collections file: {str(e)}"
+            return
+        
+        # Update status with collection count
+        with collections_lock:
+            collections_status['collections_found'] = len(collections)
+        
+        # Create a KomootAdapter for enhancing tour data
+        adapter = KomootAdapter()
+        
+        # Enhance each collection one by one
+        enhanced_collections = []
+        enhanced_count = 0
+        
+        for i, collection in enumerate(collections):
+            try:
+                collection_name = collection.get('name', f"Collection {i+1}")
+                add_log_entry(f"Enhancing collection {i+1}/{len(collections)}: {collection_name}", collections_status)
+                
+                # Skip collections that appear to be already enhanced
+                tour_count = len(collection.get('tours', []))
+                enhanced_tour_count = sum(1 for tour in collection.get('tours', []) 
+                                         if not tour.get('name', '').startswith(f"Tour {tour.get('id', '')}"))
+                
+                if tour_count > 0 and enhanced_tour_count / tour_count > 0.8:
+                    add_log_entry(f"Collection appears to be already enhanced ({enhanced_tour_count}/{tour_count} enhanced tours)", collections_status)
+                    enhanced_collections.append(collection)
+                    enhanced_count += 1
+                    
+                    # Update progress
+                    with collections_lock:
+                        collections_status['collections_completed'] = enhanced_count
+                        collections_status['progress'] = enhanced_count / len(collections)
+                    
+                    continue
+                
+                # Only enhance if the collection has a URL
+                if 'url' not in collection:
+                    add_log_entry(f"Skipping collection without URL: {collection_name}", collections_status)
+                    enhanced_collections.append(collection)
+                    continue
+                
+                # Use fetch_all_tours_from_collection to enhance the collection
+                enhanced_collection = fetch_all_tours_from_collection(adapter, collection['url'], collections_status)
+                
+                if enhanced_collection:
+                    add_log_entry(f"Successfully enhanced collection with {len(enhanced_collection.get('tours', []))} tours", collections_status)
+                    enhanced_collections.append(enhanced_collection)
+                else:
+                    add_log_entry(f"Failed to enhance collection, keeping original", collections_status)
+                    enhanced_collections.append(collection)
+                
+                # Update progress
+                enhanced_count += 1
+                with collections_lock:
+                    collections_status['collections_completed'] = enhanced_count
+                    collections_status['progress'] = enhanced_count / len(collections)
+                
+            except Exception as e:
+                add_log_entry(f"Error enhancing collection: {str(e)}", collections_status)
+                enhanced_collections.append(collection)  # Keep original if enhancement fails
+        
+        # Update final status
+        with collections_lock:
+            collections_status['status'] = 'completed'
+            collections_status['progress'] = 1.0
+            collections_status['results'] = enhanced_collections
+        
+        add_log_entry(f"Enhancement completed for {enhanced_count} collections", collections_status)
+        
+        # Save the enhanced collections back to file
+        collections_manager.set_user_id(user_id)
+        success = collections_manager.save_collections_data(enhanced_collections, user_id)
+        
+        if success:
+            add_log_entry(f"Successfully saved enhanced collections to files", collections_status)
+        else:
+            add_log_entry(f"Error saving enhanced collections to files", collections_status)
+        
+    except Exception as e:
+        # Handle any uncaught exceptions
+        error_msg = str(e)
+        logger.error(f"Error in collection enhancement thread: {error_msg}")
+        add_log_entry(f"Error: {error_msg}", collections_status)
+        
+        with collections_lock:
+            collections_status['status'] = 'error'
+            collections_status['error'] = error_msg
 
 if __name__ == '__main__':
     # Create directories if they don't exist

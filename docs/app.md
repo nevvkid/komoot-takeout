@@ -2,141 +2,127 @@
 
 ## Overview
 
-`app.py` is the core backend module of the komoot-takeout application, implementing a Flask web server that handles all API endpoints and business logic. This file contains the functionality for downloading Komoot tours, extracting collection data, and managing file operations.
+`app.py` is the main application file for the komoot-takeout tool. It implements a Flask web application that provides a REST API for downloading tour data and collections from Komoot. This module handles all the core functionality including user authentication, tour data retrieval, collection management, and file generation.
 
-## Key Components
+## Key Features
 
-### Core Dependencies and Imports
+### Tour Management
 
-The application relies on several key libraries:
-- **Flask**: Web framework to handle HTTP requests
-- **Beautiful Soup**: For HTML parsing of Komoot collection pages
-- **KomootGPX**: Optional dependency for enhanced GPX export functionality
-- **Requests**: For making HTTP requests to Komoot's website and API
-- **Threading/Concurrency**: For handling long-running tasks without blocking
-
-### Global Configuration
-
-- **Selected Folder Management**: Tracks the user-selected download location
-- **Status Tracking**: Maintains processing status for tours and collections
-- **Thread Synchronization**: Implements locks to prevent race conditions
-
-### Core Helper Functions
-
-| Function | Purpose |
-|----------|---------|
-| `set_selected_folder()` | Sets the global download directory |
-| `get_selected_folder()` | Retrieves current download directory |
-| `get_default_output_dir()` | Creates and returns a subdirectory in the download folder |
-| `reset_status()` | Resets processing status dictionaries |
-| `add_log_entry()` | Adds timestamped log entries to status tracking |
-| `sanitize_filename()` | Ensures filenames are valid across platforms |
-| `extract_user_id_from_url()` | Parses user IDs from Komoot URLs |
-| `extract_collection_id_from_url()` | Parses collection IDs from Komoot URLs |
-| `get_collection_slug()` | Creates URL-friendly slugs for collections |
-| `create_user_index_html()` | Generates redirect HTML files for user profiles |
-| `make_request_with_retry()` | Makes HTTP requests with retry logic |
+- **Tour Retrieval**: Download individual or batch tours from a Komoot account
+- **GPX Generation**: Create GPX files with configurable options for POIs, metadata, and formatting
+- **Batch Processing**: Handle large tour sets with chunking and pagination
+- **Image Downloads**: Optionally download associated tour images
 
 ### Collection Management
 
-The `CollectionManager` class handles all collection-related operations:
-- Saving collection data to JSON and CSV files
-- Generating Jekyll configuration files from collections
-- Organizing data by user ID
-- Tour enhancement to replace generic "Tour ID" names with descriptive titles
-- Proper handling of metadata and related tour information
+- **Two-Step Collection Processing**: Separate basic scraping from detailed enhancement
+- **Collection Scraping**: Extract collections from personal, saved, or public sources
+- **Tour Data Enhancement**: Improve collection data with detailed tour information
+- **Export Options**: Generate JSON and CSV exports with comprehensive metadata
 
-### Tour Extraction and Processing
-
-| Function | Purpose |
-|----------|---------|
-| `download_tour_using_gpx_api()` | Downloads tours directly from Komoot's GPX API |
-| `download_tour_using_komootgpx()` | Uses the KomootGPX library for enhanced GPX exports |
-| `extract_tours_from_html()` | Parses tour data from HTML collection pages |
-| `fetch_all_tours_from_collection()` | Retrieves all tours from a collection with pagination handling |
-| `process_tours()` | Background worker that processes multiple tours concurrently |
-| `enhance_collections.py` | Standalone script to enhance tour names in existing collection exports |
+## Core Components
 
 ### API Endpoints
 
-#### Basic Application Endpoints
-- `GET /`: Renders the main application page
-- `GET /api/selected-folder`: Returns the currently selected download folder
-- `POST /api/select-folder`: Sets the download folder
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/start` | POST | Start tour download process |
+| `/api/status` | GET | Get current processing status |
+| `/api/collections/personal` | POST | Scrape personal collections |
+| `/api/collections/saved` | POST | Scrape saved collections |
+| `/api/collections/public` | POST | Scrape public collections by URL |
+| `/api/collections-status` | GET | Get collection processing status |
+| `/api/download-collection-tours` | POST | Download all tours in a collection |
+| `/api/enhance-collections` | POST | Enhance previously saved collections with detailed tour data |
 
-#### Tour Processing Endpoints
-- `POST /api/start`: Starts the tour processing with various options
-- `GET /api/status`: Returns the current processing status
-- `GET /api/results`: Returns the results of tour processing
-- `POST /api/clear`: Clears current results
-- `GET /api/download/<tour_id>`: Downloads a specific tour as GPX
-- `GET /api/export/images/<tour_id>`: Returns a list of images for a specific tour
-- `POST /api/tour-counts`: Counts tours for a user
+### Status Tracking
 
-#### Collection Processing Endpoints
-- `POST /api/collections/personal`: Scrapes personal collections
-- `POST /api/collections/saved`: Scrapes saved collections
-- `POST /api/collections/public`: Scrapes public collections by URL
-- `GET /api/collections-status`: Returns the collection processing status
-- `GET /api/collections-results`: Returns collection processing results
-- `POST /api/clear-collections`: Clears collection results
-- `POST /api/download-collection-tours`: Downloads all tours in specified collections
-- `GET /api/export/collection/<collection_id>/csv`: Exports a collection as CSV
+The application provides real-time status tracking with detailed progress information:
 
-## Tour Processing Flow
+```python
+processing_status = {
+    'status': 'idle',  # 'idle', 'running', 'completed', 'error'
+    'progress': 0.0,   # 0.0 to 1.0
+    'tours_found': 0,
+    'tours_completed': 0,
+    'error': None,
+    'log': [],         # Timestamped log entries
+    'results': []      # Processed items
+}
+```
 
-1. User selects parameters (tour IDs, authentication details, etc.)
-2. Application starts a background thread to process the request
-3. For each tour:
-   - Tries KomootGPX for enhanced export (if available)
-   - Falls back to direct API download or custom adapter as needed
-   - Processes tour metadata
-   - Downloads images if requested
-   - Updates status with progress information
-4. Results are stored and made available via API endpoints
+### Collection Manager
 
-## Collection Processing Flow
+The `CollectionManager` class handles all collection-related operations:
 
-1. User selects collection type or provides collection URLs
-2. Background thread scrapes collection data from Komoot
-3. The application:
-   - Extracts all tours from each collection
-   - Enhances tour data with descriptive names and complete metadata
-   - Handles pagination for large collections
-   - Processes metadata (cover images, descriptions, etc.)
-   - Downloads all tours in the collection if requested
-4. Results can be exported as JSON or CSV files
-5. Post-processing with enhance_collections.py allows fixing generic tour names in existing exports
+```python
+class CollectionManager:
+    def __init__(self, output_dir=None):
+        # Initialize with config
+    
+    def set_user_id(self, user_id):
+        # Set user ID for organization
+    
+    def save_collections_data(self, collections, user_id=None, enhance_tours=False):
+        # Save collections with optional enhancement
+    
+    def generate_jekyll_config(self, collections):
+        # Generate Jekyll site config
+```
 
-## Tour Data Enhancement
+## Two-Step Collection Enhancement
 
-The tour enhancement process ensures exported data is maximally useful:
-1. Tours initially extracted from collections often have generic "Tour ID" names
-2. Enhancement process:
-   - First tries to scrape tour pages for basic information (faster)
-   - Falls back to API calls for detailed data when needed
-   - Updates tour names, distances, elevations, and other metadata
-   - Preserves existing data when enhancement fails
-3. Standalone enhance_collections.py script can fix previously generated exports
+The application implements a two-step approach for collection enhancement:
+
+1. **Basic Collection Scraping**: Fast initial scraping that captures collection metadata and basic tour information
+2. **Detailed Tour Enhancement**: Optional second step that enriches tours with comprehensive details
+
+### Benefits
+
+- Faster initial collection saving
+- Optional enhancement for users who need detailed data
+- Prevents conflicts between downloading and enhancement
+- Provides progress tracking for the enhancement process
+- Efficiently skips already-enhanced collections
+
+### Enhancement Process
+
+The enhancement process intelligently detects and skips already-enhanced tours:
+
+```python
+# Skip collections that appear to be already enhanced
+tour_count = len(collection.get('tours', []))
+enhanced_tour_count = sum(1 for tour in collection.get('tours', []) 
+                         if not tour.get('name', '').startswith(f"Tour {tour.get('id', '')}"))
+
+if tour_count > 0 and enhanced_tour_count / tour_count > 0.8:
+    # Collection is already enhanced, skip it
+```
+
+## Background Processing
+
+All long-running operations execute in background threads to keep the UI responsive:
+
+```python
+# Start a background thread
+threading.Thread(
+    target=process_function,
+    args=(param1, param2)
+).start()
+```
 
 ## Error Handling
 
 The application implements comprehensive error handling:
-- Thread-level error catching to prevent crashes
-- Status tracking with error messages
-- Retry logic for network operations
-- Graceful fallbacks for missing dependencies
 
-## Concurrency Model
+- Thread-safe status updates with locks
+- Detailed error logging
+- User-friendly error messages
+- Graceful fallbacks when operations fail
 
-Long-running operations are handled in background threads to prevent blocking:
-- Main Flask server remains responsive during processing
-- ThreadPoolExecutor for concurrent tour processing
-- Thread synchronization using locks to protect shared state
-- Progress tracking for UI updates
+## File Management
 
-## Cross-Platform Considerations
-
-- File path handling uses platform-agnostic methods
-- Directory creation with proper error handling
-- Filename sanitization for compatibility
+- Creates organized directory structures for tours and collections
+- Handles user-specific directories with proper permissions
+- Generates consistent filenames with configurable formatting
+- Creates backup copies of important files
