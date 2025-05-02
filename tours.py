@@ -34,12 +34,59 @@ make_request_with_retry = None
 extract_collection_id_from_url = None
 
 def download_tour_using_gpx_api(tour_id):
-    """Download tour directly from Komoot's GPX API"""
-    gpx_url = f"https://www.komoot.com/api/v007/tours/{tour_id}/gpx"
-    response = requests.get(gpx_url)
-    if response.status_code != 200:
-        raise Exception(f"Failed to download tour from GPX API: HTTP {response.status_code}")
-    return response.content
+    """
+    Download a tour GPX file using the direct Komoot GPX API endpoint
+    
+    Args:
+        tour_id: The tour ID to download
+        
+    Returns:
+        Binary GPX content if successful, None if failed
+    """
+    try:
+        logger.info(f"Downloading tour {tour_id} using direct GPX API")
+        
+        # The direct GPX API URL for anonymous access
+        gpx_url = f"https://www.komoot.com/api/v007/tours/{tour_id}/gpx"
+        
+        # Set browser-like headers for better success
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+            'Accept': 'application/gpx+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Referer': 'https://www.komoot.com/'
+        }
+        
+        # Make the request with retry mechanism
+        for attempt in range(3):  # Try up to 3 times
+            try:
+                response = requests.get(gpx_url, headers=headers, timeout=30)
+                
+                if response.status_code == 200:
+                    # Check that we got GPX content
+                    content_type = response.headers.get('Content-Type', '')
+                    content = response.content
+                    
+                    if 'gpx' in content_type.lower() or content.startswith(b'<?xml') or b'<gpx' in content[:100]:
+                        logger.info(f"Successfully downloaded GPX for tour {tour_id}")
+                        return content
+                    else:
+                        logger.warning(f"Response doesn't appear to be GPX for tour {tour_id}")
+                        return None
+                else:
+                    logger.warning(f"Failed to download tour {tour_id}, status code: {response.status_code}")
+                    if attempt < 2:  # Not the last attempt
+                        time.sleep(2 ** attempt)  # Exponential backoff
+            except requests.RequestException as e:
+                logger.error(f"Request error for tour {tour_id} (attempt {attempt+1}): {str(e)}")
+                if attempt < 2:  # Not the last attempt
+                    time.sleep(2 ** attempt)  # Exponential backoff
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error downloading tour {tour_id} via GPX API: {str(e)}")
+        return None
 
 def download_tour_using_komootgpx(tour_id, email=None, password=None, output_dir=None, 
                                  include_poi=True, max_desc_length=-1, max_title_length=-1, add_date=True):
@@ -66,8 +113,17 @@ def download_tour_using_komootgpx(tour_id, email=None, password=None, output_dir
         return None
         
     try:
-        # Import KomootGPX functionality
-        from komootgpx import KomootGPX
+        # Try different import approaches for compatibility with different versions
+        try:
+            # For newer versions of komootgpx
+            from komootgpx import KomootGPX
+        except ImportError:
+            try:
+                # For older versions where KomootGPX might be in a different location
+                from komootgpx.komootgpx import KomootGPX
+            except ImportError:
+                logger.error("Failed to import KomootGPX class from any known location")
+                return None
         
         # Create output directory if it doesn't exist
         if output_dir:
@@ -629,6 +685,195 @@ def fetch_all_tours_from_collection(adapter, collection_url, status_dict, max_wo
     except Exception as e:
         add_log_entry(f"Error fetching all tours from collection: {str(e)}", status_dict)
         return None
+
+def process_single_tour(tour_id, anonymous=False, email=None, password=None, filter_type=None, 
+                        output_dir=None, include_poi=True, skip_existing=True, id_filename=False, 
+                        add_date=True, max_title_length=-1, max_desc_length=-1, download_images=False,
+                        user_id=None):
+    """Process a single tour for download"""
+    start_time = time.time()
+    adapter = KomootAdapter()
+    
+    try:
+        # Show processing status
+        add_log_entry(f"Processing tour {tour_id}", processing_status)
+        
+        # Set up the proper output directory structure
+        if output_dir:
+            final_output_dir = output_dir
+        else:
+            # Use the hierarchical directory structure
+            base_dir = get_selected_folder()
+            
+            if anonymous:
+                # For anonymous mode, use a simple structure
+                final_output_dir = os.path.join(base_dir, 'gpx')
+            else:
+                # For authenticated mode, use hierarchical structure
+                tours_dir = os.path.join(base_dir, 'tours')
+                
+                # If we have a user ID, organize by user
+                if user_id:
+                    user_dir = os.path.join(tours_dir, f"user-{user_id}")
+                    
+                    # We'll determine if it's recorded or planned when we get the tour data
+                    # For now, create both directories
+                    recorded_dir = os.path.join(user_dir, 'recorded_tours')
+                    planned_dir = os.path.join(user_dir, 'planned_tours')
+                    
+                    os.makedirs(recorded_dir, exist_ok=True)
+                    os.makedirs(planned_dir, exist_ok=True)
+                    
+                    # Default to recorded (will be updated later)
+                    final_output_dir = recorded_dir
+                else:
+                    # No user ID, just use tours directory
+                    final_output_dir = tours_dir
+        
+        # Ensure the output directory exists
+        os.makedirs(final_output_dir, exist_ok=True)
+        
+        # Handle authentication
+        if not anonymous:
+            try:
+                adapter.login(email, password)
+                # Get user ID if not provided
+                if not user_id and adapter.get_user_id():
+                    user_id = adapter.get_user_id()
+                    
+                    # If we now have a user ID, update the directory structure
+                    if user_id and not output_dir:
+                        base_dir = get_selected_folder()
+                        tours_dir = os.path.join(base_dir, 'tours')
+                        user_dir = os.path.join(tours_dir, f"user-{user_id}")
+                        recorded_dir = os.path.join(user_dir, 'recorded_tours')
+                        planned_dir = os.path.join(user_dir, 'planned_tours')
+                        
+                        os.makedirs(recorded_dir, exist_ok=True)
+                        os.makedirs(planned_dir, exist_ok=True)
+                        
+                        final_output_dir = recorded_dir
+            except Exception as e:
+                add_log_entry(f"Login failed: {str(e)}", processing_status)
+                return {'success': False, 'error': f"Login failed: {str(e)}"}
+            
+        # If using id_filename, adjust max_title_length 
+        if id_filename:
+            max_title_length = 0
+        
+        # Try to download using KomootGPX if available
+        gpx_content = None
+        tour_data = None
+        
+        # Try to get tour data first to determine if it's recorded or planned
+        try:
+            tour_data = adapter.fetch_tour(tour_id, anonymous=anonymous)
+            
+            # If we have tour data and user_id, check if we need to adjust output directory
+            if tour_data and user_id and not output_dir:
+                base_dir = get_selected_folder()
+                tours_dir = os.path.join(base_dir, 'tours')
+                user_dir = os.path.join(tours_dir, f"user-{user_id}")
+                
+                # Check if it's recorded or planned
+                tour_type = tour_data.get('type', '')
+                if tour_type == 'tour_recorded':
+                    final_output_dir = os.path.join(user_dir, 'recorded_tours')
+                else:
+                    final_output_dir = os.path.join(user_dir, 'planned_tours')
+                
+                # Ensure directory exists
+                os.makedirs(final_output_dir, exist_ok=True)
+                
+        except Exception as e:
+            add_log_entry(f"Error fetching tour data: {str(e)}", processing_status)
+            # Continue with default output dir in case of error
+            
+        # Log the final output directory being used
+        add_log_entry(f"Using output directory: {final_output_dir}", processing_status)
+        
+        # Try to use KomootGPX if available
+        success = False
+        if KOMOOTGPX_AVAILABLE:
+            try:
+                add_log_entry(f"Using KomootGPX for GPX generation", processing_status)
+                filename = download_tour_using_komootgpx(
+                    tour_id, 
+                    email=email if not anonymous else None, 
+                    password=password if not anonymous else None,
+                    output_dir=final_output_dir,
+                    include_poi=include_poi,
+                    max_desc_length=max_desc_length,
+                    max_title_length=max_title_length,
+                    add_date=add_date
+                )
+                
+                if filename:
+                    success = True
+                else:
+                    add_log_entry("Error using KomootGPX: cannot import name 'KomootGPX' from 'komootgpx'", processing_status)
+            except Exception as e:
+                add_log_entry(f"Error using KomootGPX: {str(e)}", processing_status)
+        
+        # If KomootGPX failed or isn't available, use adapter's own implementation
+        if not success:
+            try:
+                adapter.make_gpx(
+                    tour_id=tour_id,
+                    output_dir=final_output_dir,
+                    include_poi=include_poi,
+                    skip_existing=skip_existing,
+                    tour_base=tour_data,
+                    add_date=add_date,
+                    max_title_length=max_title_length,
+                    max_desc_length=max_desc_length,
+                    anonymous=anonymous
+                )
+                success = True
+            except Exception as e:
+                add_log_entry(f"Error generating GPX: {str(e)}", processing_status)
+                return {'success': False, 'error': f"Failed to generate GPX: {str(e)}"}
+        
+        # Download tour images if requested
+        image_paths = []
+        if download_images and success:
+            try:
+                images_dir = os.path.join(get_selected_folder(), 'images')
+                image_paths = adapter.download_tour_images(tour_id, tour_data, images_dir)
+                if image_paths:
+                    add_log_entry(f"Downloaded {len(image_paths)} images for tour {tour_id}", processing_status)
+            except Exception as e:
+                add_log_entry(f"Error downloading tour images: {str(e)}", processing_status)
+        
+        # Get the filename that was used
+        filename = adapter.get_last_filename()
+        
+        # Create result object
+        tour = adapter.get_last_tour()
+        tour_name = tour.get('name', f"Tour {tour_id}")
+        
+        result = {
+            'tour_id': tour_id,
+            'tour_name': tour_name,
+            'filename': filename,
+            'path': final_output_dir,
+            'time': round(time.time() - start_time, 2),
+            'success': success,
+            'error': None if success else "Failed to download tour",
+            'image_count': len(image_paths) if image_paths else 0
+        }
+        
+        return result
+        
+    except Exception as e:
+        add_log_entry(f"Error processing tour {tour_id}: {str(e)}", processing_status)
+        return {
+            'tour_id': tour_id,
+            'tour_name': f"Tour {tour_id}",
+            'success': False,
+            'error': str(e),
+            'time': round(time.time() - start_time, 2)
+        }
 
 def process_tours(anonymous, email, password, tour_selection, filter_type, 
                  no_poi, output_dir, skip_existing, id_filename, add_date,

@@ -425,26 +425,57 @@ class KomootAdapter:
         collections = []
         soup = BeautifulSoup(page_html, 'html.parser')
         
-        # Find all collection cards or links
-        collection_elements = soup.select('.collection-card')
+        # Try multiple strategies to find collection elements in the current Komoot UI
+        collection_elements = []
         
-        if not collection_elements:
-            # Try alternate selectors
-            collection_elements = soup.select('.tw-mb-8')
+        # Strategy 1: Try modern UI with data-test attributes
+        modern_elements = soup.select('[data-test="collection-item"]')
+        if modern_elements:
+            collection_elements.extend(modern_elements)
+            logger.info(f"Found {len(modern_elements)} collections with modern data-test selector")
             
+        # Strategy 2: Try classic collection-card class
         if not collection_elements:
-            # Try to find by collection links directly
-            collection_elements = soup.find_all('a', href=re.compile(r'/collection/\d+'))
+            classic_elements = soup.select('.collection-card')
+            if classic_elements:
+                collection_elements.extend(classic_elements)
+                logger.info(f"Found {len(classic_elements)} collections with classic collection-card selector")
         
-        logger.info(f"Found {len(collection_elements)} {collection_type} collection elements")
+        # Strategy 3: Try new UI with tailwind classes
+        if not collection_elements:
+            # Look for elements with common Tailwind container classes that might contain collections
+            tw_elements = soup.select('.tw-mb-8')
+            if tw_elements:
+                collection_elements.extend(tw_elements)
+                logger.info(f"Found {len(tw_elements)} collections with Tailwind container selector")
         
+        # Strategy 4: Directly find collection links
+        if not collection_elements:
+            link_elements = soup.find_all('a', href=re.compile(r'/collection/\d+'))
+            if link_elements:
+                collection_elements.extend(link_elements)
+                logger.info(f"Found {len(link_elements)} collections with direct link selector")
+        
+        # Strategy 5: Look for any elements with collection in the class name
+        if not collection_elements:
+            collection_class_elements = soup.find_all(class_=lambda c: c and 'collection' in c.lower())
+            if collection_class_elements:
+                collection_elements.extend(collection_class_elements)
+                logger.info(f"Found {len(collection_class_elements)} collections with collection class selector")
+        
+        logger.info(f"Found total of {len(collection_elements)} {collection_type} collection elements")
+        
+        # Process each collection element
         for element in collection_elements:
             try:
-                # Find collection link
+                # Find collection link - try multiple strategies
                 link = None
+                
+                # Direct link element
                 if element.name == 'a' and '/collection/' in element.get('href', ''):
                     link = element
                 else:
+                    # Find first link to a collection in this element
                     link = element.find('a', href=re.compile(r'/collection/\d+'))
                 
                 if not link or not link.get('href'):
@@ -458,27 +489,82 @@ class KomootAdapter:
                     
                 collection_id = match.group(1)
                 
-                # Get collection name
-                name_element = element.select_one('.collection-card__title')
-                if not name_element:
-                    # Try alternate selectors
-                    name_element = element.find('h3') or element.find('h2') or element.find('h4')
-                    
+                # Get collection name - try multiple potential elements
                 collection_name = f"Collection {collection_id}"
-                if name_element:
-                    collection_name = name_element.text.strip()
                 
-                # Get URL
+                # Try multiple selectors to find the collection title
+                name_element = None
+                
+                # Method 1: Look for specific title classes
+                name_selectors = [
+                    '.collection-card__title',
+                    '[data-test="collection-title"]',
+                    '.tw-text-lg.tw-font-bold',
+                    '.tw-font-bold',
+                ]
+                
+                for selector in name_selectors:
+                    name_element = element.select_one(selector)
+                    if name_element:
+                        break
+                
+                # Method 2: Try headings if no title found
+                if not name_element:
+                    for heading in ['h3', 'h2', 'h4', 'h5']:
+                        name_element = element.find(heading)
+                        if name_element:
+                            break
+                
+                # Method 3: Use any prominent text elements
+                if not name_element:
+                    # Look for elements with font-bold class
+                    bold_elements = element.select('.tw-font-bold')
+                    if bold_elements:
+                        name_element = bold_elements[0]  # Use the first bold element
+                
+                if name_element:
+                    name_text = name_element.text.strip()
+                    if name_text:
+                        collection_name = name_text
+                
+                # Get full URL
                 collection_url = href if href.startswith('http') else f"https://www.komoot.com{href}"
                 
                 # Get tour count if available
                 tour_count = 0
+                
+                # Try multiple strategies for finding tour count
                 count_element = element.select_one('.collection-card__tours-count')
+                if not count_element:
+                    count_element = element.select_one('[data-test="collection-count"]')
+                
+                if not count_element:
+                    # Look for text content that mentions tours or routes
+                    for span_element in element.find_all('span'):
+                        span_text = span_element.text.strip().lower()
+                        if 'tour' in span_text or 'route' in span_text or 'activity' in span_text:
+                            count_match = re.search(r'(\d+)', span_text)
+                            if count_match:
+                                try:
+                                    tour_count = int(count_match.group(1))
+                                    break
+                                except ValueError:
+                                    pass
+                
                 if count_element:
                     count_text = count_element.text.strip()
                     count_match = re.search(r'(\d+)', count_text)
                     if count_match:
-                        tour_count = int(count_match.group(1))
+                        try:
+                            tour_count = int(count_match.group(1))
+                        except ValueError:
+                            pass
+                
+                # Look for cover image
+                cover_image_url = None
+                img_element = element.find('img')
+                if img_element and 'src' in img_element.attrs:
+                    cover_image_url = img_element['src']
                 
                 # Create collection object
                 collection = {
@@ -486,16 +572,24 @@ class KomootAdapter:
                     'name': collection_name,
                     'url': collection_url,
                     'type': collection_type,
-                    'tours_count': tour_count
+                    'tours_count': tour_count,
+                    'cover_image_url': cover_image_url
                 }
                 
                 collections.append(collection)
+                logger.debug(f"Added collection: {collection_name} (ID: {collection_id}) with {tour_count} tours")
                 
             except Exception as e:
                 logger.error(f"Error processing collection element: {str(e)}")
         
+        if not collections:
+            logger.warning(f"No collections extracted from page. HTML content length: {len(page_html)}")
+            # Save a snippet of the HTML for debugging
+            snippet = page_html[:500] + "... [truncated]" if len(page_html) > 500 else page_html
+            logger.debug(f"HTML snippet: {snippet}")
+            
         return collections
-        
+    
     def extract_tours_from_collection_page(self, page_url):
         """Extract tours from a collection page URL"""
         try:
@@ -687,8 +781,8 @@ class KomootAdapter:
             
             # Extract the slug from the URL if present
             collection_slug = ""
-            slug_match = re.search(r'/collection/\d+/-([a-z0-9-]+)', collection_url)
-            if slug_match:
+            slug_match = re.search(r'/collection/\d+/?-?([a-z0-9-]+)?', collection_url)
+            if slug_match and slug_match.group(1):
                 collection_slug = slug_match.group(1)
                 logger.info(f"Extracted slug from URL: {collection_slug}")
             
@@ -806,13 +900,8 @@ class KomootAdapter:
                         logger.info(f"Found cover image using selector: {selector}")
                         break
             
-            # Extract slug from URL
-            collection_slug = None
-            url_match = re.search(r'/collection/\d+/-([a-z0-9-]+)', collection_url)
-            if url_match:
-                collection_slug = url_match.group(1)
-            elif collection_name:
-                # Generate slug from name if not in URL
+            # Generate slug from collection name if not present in URL
+            if not collection_slug and collection_name:
                 collection_slug = re.sub(r'[^a-z0-9]', '-', collection_name.lower())
                 collection_slug = re.sub(r'-+', '-', collection_slug)  # Remove duplicate hyphens
                 collection_slug = collection_slug.strip('-')  # Remove leading/trailing hyphens
@@ -853,7 +942,7 @@ class KomootAdapter:
                         tour_ids_seen.add(tour_id)
                         tours.append(tour)
                         
-            logger.info(f"Extracted {len(tours)} tours from first page")
+                logger.info(f"Extracted {len(tours)} tours from first page")
             
             # Strategy 2: Try to get more tours by increasing page size
             if expected_tours_count > 0 and len(tours) < expected_tours_count:
@@ -968,16 +1057,23 @@ class KomootAdapter:
                     url = f"https://www.komoot.com/user/{username_for_url}/collections/{coll_type}"
                     logger.info(f"Fetching {coll_type} collections from {url}")
                     
-                    # Request the page with proper headers
+                    # Request the page with modern browser headers
                     headers = {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                        'Accept-Language': 'en-US,en;q=0.5',
+                        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                        'Accept-Language': 'en-US,en;q=0.9',
                         'Referer': 'https://www.komoot.com/',
-                        'Connection': 'keep-alive',
-                        'Upgrade-Insecure-Requests': '1'
+                        'sec-ch-ua': '"Chromium";v="121", "Not A(Brand";v="24"',
+                        'sec-ch-ua-mobile': '?0',
+                        'sec-ch-ua-platform': '"macOS"',
+                        'sec-fetch-dest': 'document',
+                        'sec-fetch-mode': 'navigate',
+                        'sec-fetch-site': 'same-origin',
+                        'sec-fetch-user': '?1',
+                        'upgrade-insecure-requests': '1'
                     }
                     
+                    # Add any cookies from session to help with authentication
                     response = requests.get(url, headers=headers, cookies=self.session.cookies)
                     
                     if response.status_code != 200:
@@ -998,22 +1094,31 @@ class KomootAdapter:
                                 
                             logger.info(f"Fetching details for collection {i+1}/{len(page_collections)}: {collection['name']}")
                             
-                            collection_details = self.fetch_collection_by_url(collection['url'])
-                            
-                            if collection_details:
-                                # Keep original type and ID
-                                original_type = collection['type']
-                                original_id = collection['id']
+                            # Attempt to get detailed collection information
+                            try:
+                                collection_details = self.fetch_collection_by_url(collection['url'])
                                 
-                                # Update collection with details
-                                collection.update(collection_details)
-                                
-                                # Ensure type and ID remain consistent
-                                collection['type'] = original_type
-                                collection['id'] = original_id
-                                
-                                # Add to collection list
-                                collections.append(collection)
+                                if collection_details:
+                                    # Keep original type and ID
+                                    original_type = collection['type']
+                                    original_id = collection['id']
+                                    
+                                    # Update collection with details
+                                    collection.update(collection_details)
+                                    
+                                    # Ensure type and ID remain consistent
+                                    collection['type'] = original_type
+                                    collection['id'] = original_id
+                                    
+                                    # Add to collection list
+                                    collections.append(collection)
+                                else:
+                                    logger.warning(f"Failed to fetch details for collection: {collection['name']}")
+                                    collections.append(collection)  # Add the basic version anyway
+                                    
+                            except Exception as detail_err:
+                                logger.warning(f"Error fetching collection details: {str(detail_err)}")
+                                collections.append(collection)  # Add the basic version anyway
                             
                         except Exception as coll_err:
                             logger.error(f"Error fetching collection details: {str(coll_err)}")
@@ -1180,6 +1285,14 @@ class KomootAdapter:
         try:
             logger.info(f"Making GPX for tour {tour_id}, anonymous: {anonymous}")
             
+            # Ensure output directory is valid
+            if not output_dir or output_dir == "undefined":
+                output_dir = os.path.join(os.path.expanduser("~"), "komoot-takeout", "gpx")
+                logger.warning(f"Invalid output directory provided, using default: {output_dir}")
+            
+            # Ensure the output directory exists
+            os.makedirs(output_dir, exist_ok=True)
+            
             # First try using KomootGPX if available
             if KOMOOTGPX_AVAILABLE:
                 logger.info("Trying KomootGPX for GPX generation")
@@ -1221,14 +1334,14 @@ class KomootAdapter:
                     
                     if result.returncode != 0:
                         logger.error(f"KomootGPX failed: {result.stderr}")
-                        raise Exception("KomootGPX execution failed")
+                        raise Exception("KomootGPX execution failed, falling back to built-in method")
                     
                     # Extract filename from output
                     output = result.stdout
                     filename_match = re.search(r"GPX file written to ['\"](.+?)['\"]", output)
                     if filename_match:
                         full_path = filename_match.group(1)
-                        self._last_filename = os.path.basename(full_path)
+                        self.last_filename = os.path.basename(full_path)
                         logger.info(f"GPX file written to {full_path}")
                         
                         # Save tour data for reference
@@ -1243,9 +1356,10 @@ class KomootAdapter:
                                 return f.read()
                                 
                         return True
-                        
+                    
                 except Exception as e:
-                    logger.error(f"KomootGPX failed: {str(e)}, falling back to built-in method")
+                    logger.error(f"KomootGPX failed: {str(e)}")
+                    logger.error(f"KomootGPX failed: KomootGPX execution failed, falling back to built-in method")
             
             # Fallback to direct API or our own implementation
             if anonymous:
@@ -1331,7 +1445,7 @@ class KomootAdapter:
                 filename = f"{filename}-{tour_id}"
             
             # Full path
-            path = f"{output_dir}/{date_str}{filename}.gpx"
+            path = os.path.join(output_dir, f"{date_str}{filename}.gpx")
             self.last_filename = f"{date_str}{filename}.gpx"
             
             logger.info(f"GPX will be saved as {path}")
@@ -1457,37 +1571,49 @@ class KomootAdapter:
                                 
                                 if "name" in ref:
                                     name = ref["name"]
-                                if "location" in ref:
-                                    location = ref["location"]
-                                if "details" in ref:
-                                    details = ', '.join(str(x['formatted']) for x in ref['details'])
-                                
-                                # Create waypoint for this POI if location is valid
-                                if location and "lat" in location and "lng" in location:
-                                    wp = gpxpy.gpx.GPXWaypoint(location["lat"], location["lng"])
-                                    wp.name = name
-                                    wp.description = details
-                                    wp.type = "POI"
                                     
+                                if "lat" in ref and "lng" in ref:
+                                    location['lat'] = ref["lat"]
+                                    location['lng'] = ref["lng"]
+                                    if "alt" in ref:
+                                        location['alt'] = ref["alt"]
+                                        
+                                if "notes" in ref and "text" in ref["notes"]:
+                                    details = ref["notes"]["text"]
+                                    
+                                if location:
+                                    # Create waypoint
+                                    wp = gpxpy.gpx.GPXWaypoint(location['lat'], location['lng'])
+                                    wp.name = name
+                                    if 'alt' in location:
+                                        wp.elevation = location['alt']
+                                    if details:
+                                        wp.description = details
+                            
                             elif item["type"] == "highlight":
-                                # Handle highlight POI
+                                # Handle highlight
                                 name = "Unknown Highlight"
                                 location = {}
                                 details = ""
-                                url = f"https://www.komoot.de/highlight/{ref['id']}" if 'id' in ref else ""
-                                image_url = ""
                                 
                                 if "name" in ref:
                                     name = ref["name"]
-                                if "mid_point" in ref:
-                                    location = ref["mid_point"]
-                                if "_embedded" in ref and "front_image" in ref["_embedded"] and "src" in ref["_embedded"]["front_image"]:
-                                    image_url = ref["_embedded"]["front_image"]["src"].split("?", 1)[0]
-                                
-                                # Get tips/comments for this highlight
-                                try:
-                                    if not anonymous and 'id' in ref:
-                                        tips = self.fetch_highlight_tips(str(ref["id"]))
+                                    
+                                if "lat" in ref and "lng" in ref:
+                                    location['lat'] = ref["lat"]
+                                    location['lng'] = ref["lng"]
+                                    if "alt" in ref:
+                                        location['alt'] = ref["alt"]
+                                        
+                                # Try to get highlight description
+                                if "description" in ref:
+                                    details = ref["description"]
+                                    
+                                # Try to fetch additional tips (comments)
+                                if "id" in ref:
+                                    highlight_id = ref["id"]
+                                    try:
+                                        tips = self.fetch_highlight_tips(highlight_id)
                                         if "_embedded" in tips and "items" in tips["_embedded"]:
                                             comments = []
                                             for tip in tips["_embedded"]["items"]:
@@ -1498,30 +1624,26 @@ class KomootAdapter:
                                             
                                             if comments:
                                                 details = "\n――――――――――\n".join(comments)
-                                except Exception as e:
-                                    logger.warning(f"Error fetching highlight tips: {str(e)}")
+                                    except Exception as e:
+                                        logger.warning(f"Error fetching highlight tips: {str(e)}")
                                 
                                 # Crop description if needed
                                 if max_desc_length == 0:
                                     details = ""
                                 elif max_desc_length > 0 and details and len(details) > max_desc_length:
-                                    details = details[:max_desc_length - 3] + "..."
+                                    details = details[:max_desc_length-3] + "..."
                                 
-                                # Create waypoint for this highlight if location is valid
-                                if location and "lat" in location and "lng" in location:
-                                    wp = gpxpy.gpx.GPXWaypoint(location["lat"], location["lng"])
+                                if location:
+                                    # Create waypoint
+                                    wp = gpxpy.gpx.GPXWaypoint(location['lat'], location['lng'])
                                     wp.name = name
-                                    wp.description = details
-                                    wp.type = "Highlight"
-                                    wp.link = url
-                                    wp.link_text = "View Highlight on Komoot"
-                                    wp.comment = image_url  # Store image URL in comment
-                            
-                            # Add waypoint to GPX if created
+                                    if 'alt' in location:
+                                        wp.elevation = location['alt']
+                                    if details:
+                                        wp.description = details
+                                    
+                            # Add waypoint if valid
                             if wp:
-                                wp.source = "Komoot"
-                                if "alt" in location:
-                                    wp.elevation = location["alt"]
                                 gpx.waypoints.append(wp)
                 
                 # Generate final XML
@@ -1571,6 +1693,7 @@ class KomootAdapter:
             Path to the exported JSON file
         """
         try:
+            # Create output directory if it doesn't exist
             os.makedirs(output_dir, exist_ok=True)
             
             # Create filename from collection name
@@ -1578,19 +1701,107 @@ class KomootAdapter:
             if not filename:
                 filename = f"collection_{collection['id']}"
             
-            # Enhance tours with full data if requested
-            collection_to_export = collection
-            if enhance_tours:
-                logger.info(f"Enhancing tours for collection {collection['name']}")
-                collection_to_export = self.enhance_collection_tours(collection, max_tours=max_enhanced_tours)
-                
-            path = os.path.join(output_dir, f"{filename}-{collection['id']}.json")
+            # Make a deep copy of the collection to avoid modifying the original
+            import copy
+            collection_to_export = copy.deepcopy(collection)
             
+            # Ensure we have a tours list
+            if 'tours' not in collection_to_export or collection_to_export['tours'] is None:
+                collection_to_export['tours'] = []
+                logger.warning(f"Collection {collection_to_export.get('id', 'unknown')} had no tours array, adding empty one")
+            
+            # Enhance tours with full data if requested
+            if enhance_tours and collection_to_export['tours']:
+                logger.info(f"Enhancing tours for collection {collection_to_export['name']}")
+                
+                # Limit the number of tours to enhance if needed
+                tours_to_enhance = collection_to_export['tours']
+                if max_enhanced_tours > 0 and len(tours_to_enhance) > max_enhanced_tours:
+                    logger.info(f"Limiting tour enhancement to first {max_enhanced_tours} of {len(tours_to_enhance)} tours")
+                    tours_to_enhance = tours_to_enhance[:max_enhanced_tours]
+                
+                # Enhance each tour with additional details
+                enhanced_tours = []
+                for i, tour in enumerate(tours_to_enhance):
+                    tour_id = tour['id']
+                    try:
+                        logger.info(f"Enhancing tour {i+1}/{len(tours_to_enhance)}: {tour_id}")
+                        
+                        # Try to get full tour data through different methods
+                        full_tour = None
+                        
+                        # Method 1: Try HTML scraping as it's faster
+                        try:
+                            full_tour = self._scrape_tour_page(tour_id)
+                            if full_tour:
+                                logger.info(f"Retrieved tour data via scraping for {tour_id}")
+                        except Exception as scrape_err:
+                            logger.warning(f"Error scraping tour page: {str(scrape_err)}")
+                        
+                        # Method 2: If scraping failed or returned minimal data, try API call
+                        if not full_tour or full_tour.get('name') == f"Tour {tour_id}":
+                            try:
+                                full_tour = self.fetch_tour(tour_id, anonymous=True)
+                                if full_tour:
+                                    logger.info(f"Retrieved tour data via API for {tour_id}")
+                            except Exception as api_err:
+                                logger.warning(f"Error fetching tour via API: {str(api_err)}")
+                        
+                        # Enhance the tour object with the retrieved data
+                        if full_tour:
+                            # Start with original tour data and update with new details
+                            enhanced_tour = {**tour}
+                            
+                            # Copy important fields from the full tour data
+                            for key in ['name', 'sport', 'distance', 'distance_km', 'duration', 
+                                        'elevation_up', 'elevation_down', 'date', 'type']:
+                                if key in full_tour and full_tour[key]:
+                                    enhanced_tour[key] = full_tour[key]
+                            
+                            # Calculate derived fields if needed
+                            if 'distance' in full_tour and full_tour['distance'] and 'distance_km' not in enhanced_tour:
+                                enhanced_tour['distance_km'] = full_tour['distance'] / 1000
+                            
+                            if 'duration' in full_tour and full_tour['duration'] and 'duration_hours' not in enhanced_tour:
+                                enhanced_tour['duration_hours'] = full_tour['duration'] / 3600
+                            
+                            # Add to enhanced tours list
+                            enhanced_tours.append(enhanced_tour)
+                        else:
+                            # If enhancement failed, keep original tour data
+                            enhanced_tours.append(tour)
+                            
+                    except Exception as e:
+                        logger.error(f"Error enhancing tour {tour_id}: {str(e)}")
+                        enhanced_tours.append(tour)  # Keep original tour data
+                
+                # Add any remaining unenhanced tours
+                if max_enhanced_tours > 0 and len(collection_to_export['tours']) > max_enhanced_tours:
+                    enhanced_tours.extend(collection_to_export['tours'][max_enhanced_tours:])
+                
+                # Update collection with enhanced tours
+                collection_to_export['tours'] = enhanced_tours
+                
+                # Add enhancement metadata
+                collection_to_export['enhanced'] = True
+                collection_to_export['enhanced_timestamp'] = datetime.now().isoformat()
+                collection_to_export['enhanced_count'] = len(tours_to_enhance)
+            
+            # Ensure we have all required collection fields
+            if 'id' not in collection_to_export:
+                collection_to_export['id'] = str(hash(collection_to_export['name']))
+            
+            if 'name' not in collection_to_export:
+                collection_to_export['name'] = f"Collection {collection_to_export['id']}"
+            
+            # Save to file
+            path = os.path.join(output_dir, f"{filename}-{collection_to_export['id']}.json")
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(collection_to_export, f, indent=2, ensure_ascii=False)
-                
-            logger.info(f"Exported collection '{collection['name']}' to {path} with enhanced tour data")
+            
+            logger.info(f"Exported collection '{collection_to_export['name']}' to {path}")
             return path
+            
         except Exception as e:
             logger.error(f"Error exporting collection to JSON: {str(e)}")
             return None
@@ -1616,143 +1827,199 @@ class KomootAdapter:
                 filename = f"collection_{collection['id']}"
             
             # Enhance tours with full data if requested
-            collection_to_export = collection
-            if enhance_tours:
-                logger.info(f"Enhancing tours for collection {collection['name']} before CSV export")
-                collection_to_export = self.enhance_collection_tours(collection, max_tours=max_enhanced_tours)
+            collection_to_export = copy.deepcopy(collection)
+            if enhance_tours and collection_to_export.get('tours'):
+                # Limit the number of tours to enhance for performance
+                tours_to_enhance = collection_to_export['tours'][:max_enhanced_tours]
+                enhanced_count = 0
                 
-            path = os.path.join(output_dir, f"{filename}-{collection['id']}_tours.csv")
+                for i, tour in enumerate(tours_to_enhance):
+                    try:
+                        # Only enhance if it looks like basic data (name is just "Tour ID")
+                        tour_id = tour['id']
+                        if tour['name'].startswith(f"Tour {tour_id}"):
+                            logger.info(f"Enhancing tour {i+1}/{len(tours_to_enhance)}: {tour_id}")
+                            tour_data = self._scrape_tour_page(tour_id)
+                            if tour_data and 'name' in tour_data and tour_data['name'] != f"Tour {tour_id}":
+                                # Update with enhanced data
+                                for key, value in tour_data.items():
+                                    if key not in tour or not tour[key]:
+                                        tour[key] = value
+                                enhanced_count += 1
+                    except Exception as e:
+                        logger.error(f"Error enhancing tour {tour.get('id')}: {str(e)}")
+                        
+                logger.info(f"Enhanced {enhanced_count}/{len(tours_to_enhance)} tours in collection")
             
-            # Prepare data for CSV
-            if 'tours' not in collection_to_export or not collection_to_export['tours']:
-                logger.warning(f"No tours found in collection '{collection_to_export['name']}'")
-                return None
+            # Current timestamp for all records
+            current_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            # CSV file path
+            csv_path = os.path.join(output_dir, f"{filename}.csv")
+            
+            # Define fields to include in the CSV - with bikepacking.com format in mind
+            fieldnames = [
+                "id", "timestamp", "name", "distance_km", "distance_mi", "duration",
+                "unpaved_percentage", "singletrack_percentage", "rideable_percentage",
+                "total_ascent", "total_descent", "high_point", "climbing_intensity",
+                "country", "region", "collection_name", "collection_id", 
+                "sport_type", "description", "url", "gpx_url", "image_url", 
+                "collection_cover_image", "date_created"
+            ]
+            
+            # Process tours to CSV format
+            csv_tours = []
+            for tour in collection_to_export.get('tours', []):
+                try:
+                    # Handle distance - convert from meters to km if needed
+                    distance_km = 0
+                    if tour.get('distance_km') is not None:
+                        distance_km = float(tour.get('distance_km'))
+                    elif tour.get('distance') is not None:
+                        distance_km = float(tour.get('distance')) / 1000
+                    
+                    # Handle duration - convert from seconds to hours if needed
+                    duration_hours = 0
+                    if tour.get('duration_hours') is not None:
+                        duration_hours = float(tour.get('duration_hours'))
+                    elif tour.get('duration') is not None:
+                        duration_hours = float(tour.get('duration')) / 3600
+                        
+                    # Create standardized tour object
+                    csv_tour = {
+                        "id": tour.get('id', ''),
+                        "timestamp": current_timestamp,
+                        "name": tour.get('name', f"Tour {tour.get('id', 'unknown')}"),
+                        "distance_km": f"{distance_km:.1f}" if distance_km else "",
+                        "distance_mi": f"{distance_km * 0.621371:.1f}" if distance_km else "",
+                        "duration": f"{duration_hours:.1f}" if duration_hours else "",
+                        "unpaved_percentage": tour.get('unpaved_percentage', ''),
+                        "singletrack_percentage": tour.get('singletrack_percentage', ''),
+                        "rideable_percentage": tour.get('rideable_percentage', ''),
+                        "total_ascent": tour.get('elevation_up', ''),
+                        "total_descent": tour.get('elevation_down', ''),
+                        "high_point": tour.get('high_point', ''),
+                        "country": tour.get('country', ''),
+                        "region": collection_to_export.get('region', ''),
+                        "collection_name": collection_to_export.get('name', ''),
+                        "collection_id": collection_to_export.get('id', ''),
+                        "sport_type": tour.get('sport', ''),
+                        "description": tour.get('description', ''),
+                        "url": tour.get('url', f"https://www.komoot.com/tour/{tour.get('id', '')}"),
+                        "gpx_url": tour.get('gpx_url', ''),
+                        "image_url": tour.get('image_url', ''),
+                        "collection_cover_image": collection_to_export.get('cover_image_url', ''),
+                        "date_created": tour.get('date', '')[:10] if tour.get('date') else ''
+                    }
+                    
+                    # Add calculated fields
+                    if tour.get('elevation_up') and distance_km:
+                        try:
+                            elevation_up = float(tour.get('elevation_up'))
+                            # Calculate meters climbed per kilometer
+                            meters_per_km = elevation_up / distance_km
+                            csv_tour["climbing_intensity"] = f"{meters_per_km:.1f}"
+                        except (ValueError, TypeError):
+                            csv_tour["climbing_intensity"] = ""
+                    else:
+                        csv_tour["climbing_intensity"] = ""
+                        
+                    csv_tours.append(csv_tour)
+                except Exception as e:
+                    logger.error(f"Error processing tour {tour.get('id', 'unknown')} for CSV: {str(e)}")
+            
+            # Only include fields that have data
+            used_fields = set()
+            for tour in csv_tours:
+                for field, value in tour.items():
+                    if value not in (None, ""):
+                        used_fields.add(field)
+            
+            # Always include essential fields
+            essential_fields = ["id", "name", "url", "timestamp"]
+            for field in essential_fields:
+                used_fields.add(field)
                 
-            # Check what fields are available in tours
-            field_names = ['id', 'name', 'url']
-            sample_tour = collection_to_export['tours'][0]
-            for key in sample_tour.keys():
-                if key not in field_names and key != 'komoot_url':  # Skip komoot_url as it's redundant
-                    field_names.append(key)
-            
-            # Ensure we have the most important fields
-            for field in ['distance_km', 'duration', 'type', 'sport']:
-                if field not in field_names:
-                    field_names.append(field)
+            # Filter fieldnames to only include fields that have data
+            filtered_fieldnames = [f for f in fieldnames if f in used_fields or f in essential_fields]
             
             # Write CSV file
-            with open(path, 'w', encoding='utf-8', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=field_names, extrasaction='ignore')
+            with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=filtered_fieldnames, extrasaction='ignore')
                 writer.writeheader()
-                for tour in collection_to_export['tours']:
-                    # Create a copy of the tour without redundant URL fields
-                    tour_data = {k: v for k, v in tour.items() if k != 'komoot_url'}
-                    writer.writerow(tour_data)
+                writer.writerows(csv_tours)
+                
+            logger.info(f"Exported {len(csv_tours)} tours from collection '{collection_to_export.get('name', 'Unknown')}' to {csv_path}")
+            return csv_path
             
-            logger.info(f"Exported {len(collection_to_export['tours'])} tours from collection '{collection_to_export['name']}' to {path}")
-            return path
         except Exception as e:
             logger.error(f"Error exporting collection to CSV: {str(e)}")
             return None
     
     def get_last_filename(self):
-        """Get the last generated filename"""
+        """Get the filename from the last GPX generation"""
         return self.last_filename
         
     def get_last_tour(self):
-        """Get the last processed tour"""
+        """Get the tour data from the last GPX generation"""
         return self.last_tour
 
     def enhance_collection_tours(self, collection, max_tours=None):
-        """Enhance tour data in a collection with full details
-
+        """
+        Enhance tours in a collection with better metadata
+        
         Args:
-            collection: The collection to enhance
-            max_tours: Maximum number of tours to enhance (to avoid long processing times)
+            collection: The collection object to enhance
+            max_tours: Maximum number of tours to enhance (None for all)
             
         Returns:
-            Enhanced collection with detailed tour data
+            Enhanced collection object
         """
-        if 'tours' not in collection or not collection['tours']:
-            logger.info(f"No tours to enhance in collection")
-            return collection
-        
-        # Create a copy of the collection to avoid modifying the original
-        collection_copy = {**collection}
-        enhanced_tours = []
-        
-        tours_to_process = collection_copy['tours']
-        if max_tours and max_tours > 0 and len(tours_to_process) > max_tours:
-            logger.info(f"Limiting enhancement to {max_tours} of {len(tours_to_process)} tours")
-            tours_to_process = tours_to_process[:max_tours]
-        
-        logger.info(f"Enhancing {len(tours_to_process)} tours in collection '{collection['name']}'")
-        
-        for i, tour in enumerate(tours_to_process):
-            tour_id = tour['id']
-            logger.info(f"Enhancing tour {i+1}/{len(tours_to_process)}: {tour_id}")
+        try:
+            # Make a deep copy to avoid modifying the original
+            import copy
+            enhanced_collection = copy.deepcopy(collection)
             
-            try:
-                # Check if tour already has detailed data
-                if not tour['name'].startswith("Tour ") and 'distance_km' in tour:
-                    logger.info(f"Tour {tour_id} already has detailed data, skipping")
-                    enhanced_tours.append(tour)
-                    continue
-                    
-                # Try to fetch the full tour data
-                full_tour = None
+            # Ensure tours array exists
+            if 'tours' not in enhanced_collection or enhanced_collection['tours'] is None:
+                enhanced_collection['tours'] = []
                 
-                # First try HTML scraping as it's faster
+            # Return early if no tours
+            if not enhanced_collection['tours']:
+                logger.warning(f"No tours to enhance in collection {enhanced_collection.get('name', 'Unknown')}")
+                return enhanced_collection
+                
+            # Limit tours to process if specified
+            tours = enhanced_collection['tours']
+            if max_tours is not None:
+                tours = tours[:max_tours]
+            
+            logger.info(f"Enhancing {len(tours)} tours in collection {enhanced_collection.get('name', 'Unknown')}")
+            
+            # Process each tour
+            enhanced_count = 0
+            for i, tour in enumerate(tours):
                 try:
-                    full_tour = self._scrape_tour_page(tour_id)
-                    logger.info(f"Retrieved tour data via scraping for {tour_id}")
-                except Exception as scrape_err:
-                    logger.warning(f"Error scraping tour page: {str(scrape_err)}")
-                
-                # If scraping failed, try API call
-                if not full_tour or full_tour['name'] == f"Tour {tour_id}":
-                    try:
-                        full_tour = self.fetch_tour(tour_id, anonymous=True)
-                        logger.info(f"Retrieved tour data via API for {tour_id}")
-                    except Exception as api_err:
-                        logger.warning(f"Error fetching tour via API: {str(api_err)}")
-                
-                # If we got tour data, enhance the tour
-                if full_tour:
-                    # Create an enhanced tour with basic info from collection plus details
-                    enhanced_tour = {**tour}  # Start with original data
+                    # Only enhance if tour appears to need it (generic name like "Tour 12345")
+                    tour_id = tour['id']
+                    if tour['name'].startswith(f"Tour {tour_id}"):
+                        logger.info(f"Enhancing tour {i+1}/{len(tours)}: {tour_id}")
+                        
+                        # Try HTML scraping for tour details
+                        tour_data = self._scrape_tour_page(tour_id)
+                        if tour_data and 'name' in tour_data and tour_data['name'] != f"Tour {tour_id}":
+                            # Update tour with better data
+                            for key, value in tour_data.items():
+                                if key not in tour or not tour[key]:
+                                    tour[key] = value
+                            enhanced_count += 1
+                            
+                except Exception as e:
+                    logger.error(f"Error enhancing tour {tour.get('id', 'unknown')}: {str(e)}")
                     
-                    # Update with key fields from full tour
-                    if 'name' in full_tour and full_tour['name'] != f"Tour {tour_id}":
-                        enhanced_tour['name'] = full_tour['name']
-                        logger.info(f"Updated tour name to '{full_tour['name']}'")
-                    if 'sport' in full_tour:
-                        enhanced_tour['sport'] = full_tour['sport']
-                    if 'distance' in full_tour:
-                        enhanced_tour['distance'] = full_tour['distance']
-                        enhanced_tour['distance_km'] = full_tour['distance'] / 1000.0 if full_tour['distance'] else 0
-                    if 'distance_km' in full_tour:
-                        enhanced_tour['distance_km'] = full_tour['distance_km']
-                    if 'duration' in full_tour:
-                        enhanced_tour['duration'] = full_tour['duration']
-                        enhanced_tour['duration_hours'] = full_tour['duration'] / 3600.0 if full_tour['duration'] else 0
-                    if 'elevation_up' in full_tour:
-                        enhanced_tour['elevation_up'] = full_tour['elevation_up']
-                    if 'elevation_down' in full_tour:
-                        enhanced_tour['elevation_down'] = full_tour['elevation_down']
-                    if 'date' in full_tour:
-                        enhanced_tour['date'] = full_tour['date']
-                    
-                    enhanced_tours.append(enhanced_tour)
-                else:
-                    # Couldn't get tour data, use original tour data
-                    logger.warning(f"Couldn't enhance tour {tour_id}, using original data")
-                    enhanced_tours.append(tour)
-                    
-            except Exception as e:
-                logger.error(f"Error enhancing tour {tour_id}: {str(e)}")
-                enhanced_tours.append(tour)  # Keep original if enhancement fails
-        
-        # Update collection with enhanced tours
-        collection_copy['tours'] = enhanced_tours
-        return collection_copy
+            logger.info(f"Enhanced {enhanced_count}/{len(tours)} tours in collection {enhanced_collection.get('name', 'Unknown')}")
+            return enhanced_collection
+            
+        except Exception as e:
+            logger.error(f"Error enhancing collection tours: {str(e)}")
+            return collection  # Return original if enhancement failed

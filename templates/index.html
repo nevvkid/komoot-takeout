@@ -226,18 +226,19 @@
 
             <!-- Modified Output Directory with Folder Selection -->
             <div class="mb-4">
-                <label for="output-dir" class="block text-gray-700 mb-2">Output Directory</label>
+                <label class="block text-gray-700 mb-2">Output Directory</label>
                 <div class="flex items-center">
-                    <input type="text" id="output-dir" class="flex-grow px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <button type="button" class="ml-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 folder-selection-btn" data-target="output-dir">
+                    <p class="flex-grow px-3 py-2 border rounded-lg bg-gray-100 text-gray-700" id="output-dir-display"></p>
+                    <button type="button" class="ml-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 folder-selection-btn" data-target="output-dir-display">
                         Browse...
                     </button>
                 </div>
+                <p class="mt-1 text-sm text-gray-500">Files will be organized automatically in the selected folder</p>
             </div>
 
             <!-- Options toggle button -->
             <div class="mb-4">
-                <button id="options-toggle-btn" class="px-4 py-2 bg-white text-gray-800 rounded-lg hover:bg-gray-300 border border-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-opacity-50">
+                <button id="options-toggle-btn" class="px-4 py-2 bg-white text-gray-700 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 hover:bg-gray-50">
                     Show Options
                 </button>
             </div>
@@ -342,10 +343,13 @@
                 <button id="count-tours-btn" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50">
                     Count Tours
                 </button>
-                <button id="start-export-btn" class="px-4 py-2 bg-4f840d text-white rounded-lg hover:bg-446f0b focus:outline-none focus:ring-2 focus:ring-4f840d focus:ring-opacity-50">
+                <button id="start-export-btn" class="px-4 py-2 bg-4f840d text-white rounded-lg hover:bg-green-600 focus:outline-none focus:ring-2 focus:ring-4f840d focus:ring-opacity-50">
                     Start Tours Export
                 </button>
-                <button id="export-clear-btn" class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50 hidden">
+                <button id="stop-process-btn" class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-opacity-50 hidden">
+                    Stop Process
+                </button>
+                <button id="export-clear-btn" class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-opacity-50 hidden">
                     Clear Results
                 </button>
             </div>
@@ -502,13 +506,14 @@
                 
                 <!-- Modified Output Directory with Folder Selection -->
                 <div class="mb-4">
-                    <label for="collections-output-dir" class="block text-gray-700 mb-2">Output Directory</label>
+                    <label class="block text-gray-700 mb-2">Output Directory</label>
                     <div class="flex items-center">
-                        <input type="text" id="collections-output-dir" class="flex-grow px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <button type="button" class="ml-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 folder-selection-btn" data-target="collections-output-dir">
+                        <p class="flex-grow px-3 py-2 border rounded-lg bg-gray-100 text-gray-700" id="output-dir-display"></p>
+                        <button type="button" class="ml-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-opacity-50 folder-selection-btn" data-target="output-dir-display">
                             Browse...
                         </button>
                     </div>
+                    <p class="mt-1 text-sm text-gray-500">Files will be organized automatically in the selected folder</p>
                 </div>
                 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
@@ -634,11 +639,18 @@
             fetch('/api/selected-folder')
                 .then(response => response.json())
                 .then(data => {
+                    // Update display elements for output directory
+                    const outputDirDisplay = document.getElementById('output-dir-display');
+                    if (outputDirDisplay) {
+                        outputDirDisplay.textContent = data.folder || "No folder selected";
+                    }
+                    
+                    // Update hidden input fields if they exist (for backward compatibility)
                     const outputDirInput = document.getElementById('output-dir');
                     const collectionsOutputDirInput = document.getElementById('collections-output-dir');
                     
-                    if (outputDirInput) outputDirInput.value = data.path;
-                    if (collectionsOutputDirInput) collectionsOutputDirInput.value = data.path;
+                    if (outputDirInput) outputDirInput.value = data.folder;
+                    if (collectionsOutputDirInput) collectionsOutputDirInput.value = data.folder;
                     
                     // Display the folder selection elements if pywebview is available
                     document.querySelectorAll('.folder-selection-btn').forEach(btn => {
@@ -657,8 +669,8 @@
         // Tours tab elements
         const anonymousCheckbox = document.getElementById('anonymous-checkbox');
         const loginSection = document.getElementById('login-section');
-        const emailInput = document.getElementById('email');
-        const passwordInput = document.getElementById('password');
+        let emailInput = document.getElementById('email');
+        let passwordInput = document.getElementById('password');
         const allToursRadio = document.getElementById('all-tours');
         const singleTourRadio = document.getElementById('single-tour');
         const tourIdInput = document.getElementById('tour-id-input');
@@ -680,6 +692,7 @@
         const chunkStartInput = document.getElementById('chunk-start');
         const countToursBtn = document.getElementById('count-tours-btn');
         const startExportBtn = document.getElementById('start-export-btn');
+        const stopProcessBtn = document.getElementById('stop-process-btn');
         const exportClearBtn = document.getElementById('export-clear-btn');
         const toursCountResult = document.getElementById('tours-count-result');
         const toursCountText = document.getElementById('tours-count-text');
@@ -738,51 +751,96 @@
             // Add folder selection functionality to each button
             document.querySelectorAll('.folder-selection-btn').forEach(btn => {
                 btn.addEventListener('click', function() {
-                    const targetInput = document.getElementById(this.dataset.target);
+                    const targetId = this.dataset.target;
+                    const targetElement = document.getElementById(targetId);
                     
                     if (isPywebview) {
                         // Use pywebview's folder dialog
                         window.pywebview.api.select_folder().then(result => {
                             if (result) {
-                                // Update the input field
-                                targetInput.value = result;
+                                // Update the display element
+                                if (targetElement) {
+                                    targetElement.textContent = result;
+                                }
                                 
                                 // Update the server
                                 fetch('/api/select-folder', {
                                     method: 'POST',
                                     headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ path: result })
+                                    body: JSON.stringify({ folder: result })
+                                }).then(() => {
+                                    // Refresh all folder displays
+                                    updateSelectedFolder();
                                 });
                             }
                         });
                     } else {
                         // Fallback if not running in pywebview
-                        const path = prompt('Enter folder path:', targetInput.value);
+                        const path = prompt('Enter folder path:', targetElement ? targetElement.textContent : '');
                         if (path) {
-                            // Update the input field
-                            targetInput.value = path;
+                            // Update the display element
+                            if (targetElement) {
+                                targetElement.textContent = path;
+                            }
                             
                             // Update the server
                             fetch('/api/select-folder', {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ path: path })
+                                body: JSON.stringify({ folder: path })
+                            }).then(() => {
+                                // Refresh all folder displays
+                                updateSelectedFolder();
                             });
                         }
                     }
                 });
             });
-        });
-        
-        // Options toggle button
-        optionsToggleBtn.addEventListener('click', () => {
-            if (optionsSection.classList.contains('hidden')) {
-                optionsSection.classList.remove('hidden');
-                optionsToggleBtn.textContent = 'Hide Options';
-            } else {
-                optionsSection.classList.add('hidden');
-                optionsToggleBtn.textContent = 'Show Options';
-            }
+
+            // SIMPLE CLEAN OPTIONS TOGGLE IMPLEMENTATION - MODIFIED
+            const optionsSection = document.getElementById('options-section');
+            const optionsToggleBtn = document.getElementById('options-toggle-btn');
+
+            // Delay initial state setting slightly to potentially avoid race conditions
+            setTimeout(() => {
+                // Make sure options are initially hidden
+                if (optionsSection && !optionsSection.classList.contains('hidden')) { // Check if it's already hidden
+                    optionsSection.classList.add('hidden');
+                }
+
+                if (optionsToggleBtn) {
+                    // Set initial text based on the actual state after the delay
+                    if (optionsSection && optionsSection.classList.contains('hidden')) {
+                         optionsToggleBtn.textContent = 'Show Options';
+                    } else {
+                         // If somehow it's not hidden, reflect that state
+                         optionsToggleBtn.textContent = 'Hide Options';
+                    }
+
+                    // Add a direct click handler (ensure it's only added once)
+                    if (!optionsToggleBtn.hasAttribute('data-click-listener-added')) {
+                        optionsToggleBtn.addEventListener('click', function() {
+                            if (optionsSection.classList.contains('hidden')) {
+                                optionsSection.classList.remove('hidden');
+                                this.textContent = 'Hide Options';
+                            } else {
+                                optionsSection.classList.add('hidden');
+                                this.textContent = 'Show Options';
+                            }
+                        });
+                        optionsToggleBtn.setAttribute('data-click-listener-added', 'true');
+                    }
+                }
+            }, 50); // Small delay (50ms)
+
+            // Update folder inputs on page load (moved earlier, before timeout)
+            // updateSelectedFolder(); // Already called above
+
+            // Set up folder selection buttons to work with pywebview
+            document.querySelectorAll('.folder-selection-btn').forEach(btn => {
+                // Show browse buttons only in desktop mode
+                btn.style.display = isPywebview ? 'inline-block' : 'none';
+            });
         });
         
         // Tab Switching
@@ -971,6 +1029,7 @@
                 // Disable buttons during processing
                 startExportBtn.disabled = true;
                 countToursBtn.disabled = true;
+                stopProcessBtn.classList.remove('hidden');
                 
                 // Start the processing
                 const response = await fetch('/api/start', {
@@ -995,6 +1054,7 @@
                 alert('Error starting export: ' + error.message);
                 startExportBtn.disabled = false;
                 countToursBtn.disabled = false;
+                stopProcessBtn.classList.add('hidden');
                 floatingProgress.classList.add('hidden');
             }
         }
@@ -1029,6 +1089,7 @@
                     statusIntervalId = null;
                     startExportBtn.disabled = false;
                     countToursBtn.disabled = false;
+                    stopProcessBtn.classList.add('hidden');
                     floatingProgress.classList.add('hidden');
                     
                     // If completed or chunk completed, fetch and display results
@@ -1764,6 +1825,62 @@
                 floatingProgress.classList.add('hidden');
             }
         }
+
+        // Stop Process button functionality
+        stopProcessBtn.addEventListener('click', async () => {
+            try {
+                // Confirm with user
+                if (!confirm('Are you sure you want to stop the current process?')) {
+                    return;
+                }
+                
+                // Call the stop API endpoint
+                const response = await fetch('/api/stop-process', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to stop process');
+                }
+                
+                // Clear intervals
+                if (statusIntervalId) {
+                    clearInterval(statusIntervalId);
+                    statusIntervalId = null;
+                }
+                
+                if (collectionsStatusIntervalId) {
+                    clearInterval(collectionsStatusIntervalId);
+                    collectionsStatusIntervalId = null;
+                }
+                
+                // Reset UI
+                startExportBtn.disabled = false;
+                countToursBtn.disabled = false;
+                stopProcessBtn.classList.add('hidden');
+                scrapePublicBtn.disabled = false;
+                enhanceCollectionsBtn.disabled = false;
+                downloadCollectionToursBtn.disabled = false;
+                floatingProgress.classList.add('hidden');
+                
+                // Add log entry about stopping
+                const currentLog = logContent.innerHTML;
+                logContent.innerHTML = currentLog + '<br>Process stopped by user.';
+                
+                const collectionsCurrentLog = collectionsLogContent.innerHTML;
+                if (collectionsCurrentLog) {
+                    collectionsLogContent.innerHTML = collectionsCurrentLog + '<br>Process stopped by user.';
+                }
+                
+                // Show message to user
+                alert('Process has been stopped.');
+                
+            } catch (error) {
+                console.error('Error stopping process:', error);
+                alert('Error stopping process: ' + error.message);
+            }
+        });
     </script>
 </body>
 </html>

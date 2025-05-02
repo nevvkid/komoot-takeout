@@ -1,15 +1,17 @@
-import os
-import re
-import time
-import json
-import csv
-import logging
-import threading
-import concurrent.futures
 from io import BytesIO
 from datetime import datetime
 from flask import request, jsonify, send_file
 from pathlib import Path
+from urllib.parse import urlparse
+import concurrent.futures
+import json
+import os
+import re
+import threading
+import csv
+
+# Import Komoot adapter
+from komoot_adapter import KomootAdapter
 
 # Import from main app module - these will be passed in when routes are registered
 logger = None
@@ -32,9 +34,6 @@ make_request_with_retry = None
 get_default_output_dir = None
 get_collection_slug = None
 sanitize_filename = None
-
-# Import Komoot adapter
-from komoot_adapter import KomootAdapter
 
 # These functions will be imported properly once modules are initialized
 extract_tours_from_html = None
@@ -136,19 +135,22 @@ def scrape_public_collections_thread(collection_urls):
     try:
         with collections_lock:
             collections_status['status'] = 'running'
-            collections_status['collections_found'] = len(collection_urls)
-        
+            collections_status['collections_found'] = 0 # Start count at 0, update as collections are found
+            collections_status['collections_completed'] = 0 # Track processed URLs
+            collections_status['results'] = [] # Ensure results are reset
+            collections_status['log'] = [] # Ensure log is reset
+
         # Log start
         add_log_entry(f"Starting public collections scraper for {len(collection_urls)} URLs", collections_status)
-        
+
         # Create a new adapter instance specifically for anonymous access
         anonymous_adapter = KomootAdapter()
-        
+
         # Process collections from user collection pages and direct collection links
         all_collections = []
         processed_urls = 0
         user_id = None
-        
+
         # Extract user ID from the first URL - if available
         for url in collection_urls:
             extracted_user_id = extract_user_id_from_url(url)
@@ -156,10 +158,10 @@ def scrape_public_collections_thread(collection_urls):
                 user_id = extracted_user_id
                 add_log_entry(f"Found user ID in URL: {user_id}", collections_status)
                 break
-        
+
         # Determine optimal number of workers based on URL count
         max_workers = min(5, len(collection_urls))
-        
+
         # Process URLs concurrently for better speed
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Function to process a single URL
@@ -168,193 +170,151 @@ def scrape_public_collections_thread(collection_urls):
                     url = url.strip()
                     if not url:
                         return {'user_id': None, 'collections': []}
-                        
+
                     add_log_entry(f"Processing URL: {url}", collections_status)
-                    
+
                     # Extract user ID from the URL if available
                     extracted_user_id = extract_user_id_from_url(url)
-                    
+                    collections_found_in_url = []
+
                     # Check if it's a user collections page or a direct collection link
                     if '/user/' in url and '/collections/' in url:
                         # This is a user collections page
                         add_log_entry(f"Detected user collections page: {url}", collections_status)
-                        
-                        # Extract user ID and collection type from URL
-                        parts = url.split('/')
-                        user_idx = parts.index('user') if 'user' in parts else -1
-                        coll_idx = parts.index('collections') if 'collections' in parts else -1
-                        
-                        if user_idx >= 0 and user_idx + 1 < len(parts) and coll_idx >= 0 and coll_idx + 1 < len(parts):
-                            page_user_id = parts[user_idx + 1]
-                            coll_type = parts[coll_idx + 1]
-                            
-                            add_log_entry(f"Attempting to scrape collections for user {page_user_id} of type {coll_type}", collections_status)
-                            
-                            try:
-                                # Set browser-like headers
-                                headers = {
-                                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                                    'Accept-Language': 'en-US,en;q=0.5',
-                                    'Referer': 'https://www.komoot.com/',
-                                    'DNT': '1'
-                                }
-                                
-                                response = make_request_with_retry(url, headers, max_retries=3)
-                                
-                                if response.status_code == 200:
-                                    # Extract collections from the page
-                                    if BS4_AVAILABLE:
-                                        page_collections = anonymous_adapter.extract_collections_from_page(response.text, coll_type)
-                                        add_log_entry(f"Found {len(page_collections)} collections on page", collections_status)
-                                        
-                                        # Set the user ID for each collection explicitly
-                                        for collection in page_collections:
-                                            if 'creator' not in collection:
-                                                collection['creator'] = {}
-                                            if 'id' not in collection['creator']:
-                                                collection['creator']['id'] = page_user_id
-                                        
-                                        # Process each collection to get full details
-                                        detailed_collections = []
-                                        for collection in page_collections:
-                                            try:
-                                                if 'url' in collection:
-                                                    # Use our enhanced function to get all tours
-                                                    detailed = fetch_all_tours_from_collection(anonymous_adapter, collection['url'], collections_status)
-                                                    if detailed:
-                                                        # Ensure user ID is preserved
-                                                        if 'creator' not in detailed:
-                                                            detailed['creator'] = {}
-                                                        if 'id' not in detailed['creator']:
-                                                            detailed['creator']['id'] = page_user_id
-                                                        detailed_collections.append(detailed)
-                                                    else:
-                                                        detailed_collections.append(collection)
-                                            except Exception as e:
-                                                add_log_entry(f"Error fetching details for collection {collection.get('name', 'Unknown')}: {str(e)}", collections_status)
-                                                detailed_collections.append(collection)
-                                                
-                                        return {
-                                            'user_id': page_user_id,
-                                            'collections': detailed_collections
-                                        }
-                                    else:
-                                        add_log_entry("BeautifulSoup4 is not installed. Cannot parse HTML.", collections_status)
+
+                        # Scrape the page to find individual collection links
+                        try:
+                            # Use the adapter's session for consistency
+                            response = make_request_with_retry(url, headers=anonymous_adapter.session.headers)
+                            response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+
+                            if not BS4_AVAILABLE:
+                                add_log_entry("BeautifulSoup not available, cannot parse user collections page.", collections_status)
+                                return {'user_id': extracted_user_id, 'collections': []}
+
+                            soup = BeautifulSoup(response.content, 'html.parser')
+
+                            # Find links to individual collections (adjust selector if Komoot changes structure)
+                            # Common patterns: links within articles, list items, or specific data attributes
+                            collection_links = soup.select('a[href*="/collection/"]')
+                            individual_collection_urls = set()
+                            base_url = "https://www.komoot.com"
+
+                            for link in collection_links:
+                                href = link.get('href')
+                                if href and '/collection/' in href:
+                                    # Construct absolute URL if relative
+                                    full_url = href if href.startswith('http') else urlparse(url)._replace(path=href).geturl()
+                                    # Extract the core collection URL part (remove query params etc.)
+                                    parsed_url = urlparse(full_url)
+                                    clean_url = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
+                                    # Ensure it's a valid collection URL structure
+                                    if re.match(r'https://www.komoot.com/collection/\d+', clean_url):
+                                        individual_collection_urls.add(clean_url)
+
+                            add_log_entry(f"Found {len(individual_collection_urls)} potential individual collection URLs on page {url}", collections_status)
+
+                            # Now fetch each individual collection using fetch_all_tours_from_collection
+                            for individual_url in individual_collection_urls:
+                                add_log_entry(f"Fetching full details for collection: {individual_url}", collections_status)
+                                # Use the globally available fetch_all_tours_from_collection
+                                # Pass the anonymous adapter instance
+                                full_collection = fetch_all_tours_from_collection(anonymous_adapter, individual_url, collections_status)
+                                if full_collection:
+                                    collections_found_in_url.append(full_collection)
+                                    add_log_entry(f"Successfully fetched collection: {full_collection.get('name', individual_url)}", collections_status)
                                 else:
-                                    add_log_entry(f"Failed to access URL: {url}, status code: {response.status_code}", collections_status)
-                                    
-                            except Exception as e:
-                                add_log_entry(f"Error processing collections page: {str(e)}", collections_status)
-                                
+                                     add_log_entry(f"Failed to fetch full details for collection: {individual_url}", collections_status)
+
+                        except Exception as page_error:
+                            add_log_entry(f"Error scraping user collections page {url}: {str(page_error)}", collections_status)
+
                     elif '/collection/' in url:
                         # This is a direct collection link
-                        try:
-                            add_log_entry(f"Fetching direct collection: {url} (may take time for large collections)", collections_status)
-                            
-                            # Use our enhanced function for fetching all tours in a collection
-                            collection = fetch_all_tours_from_collection(anonymous_adapter, url, collections_status)
-                            
-                            if collection:
-                                # Extract user ID from collection's creator if available
-                                collection_user_id = None
-                                if 'creator' in collection and 'id' in collection['creator']:
-                                    collection_user_id = collection['creator']['id']
-                                
-                                # If we have a user ID from URL, ensure it's set in the collection
-                                if extracted_user_id and not collection_user_id:
-                                    if 'creator' not in collection:
-                                        collection['creator'] = {}
-                                    collection['creator']['id'] = extracted_user_id
-                                    collection_user_id = extracted_user_id
-                                
-                                return {
-                                    'user_id': collection_user_id or extracted_user_id,
-                                    'collections': [collection]
-                                }
-                            else:
-                                add_log_entry(f"Failed to get collection data from URL: {url}", collections_status)
-                                return {'user_id': extracted_user_id, 'collections': []}
-                                
-                        except Exception as e:
-                            add_log_entry(f"Error fetching direct collection: {str(e)}", collections_status)
-                            return {'user_id': extracted_user_id, 'collections': []}
+                        add_log_entry(f"Detected direct collection link: {url}", collections_status)
+                        # Use the globally available fetch_all_tours_from_collection
+                        # Pass the anonymous adapter instance
+                        full_collection = fetch_all_tours_from_collection(anonymous_adapter, url, collections_status)
+                        if full_collection:
+                            collections_found_in_url.append(full_collection)
+                            add_log_entry(f"Successfully fetched collection: {full_collection.get('name', url)}", collections_status)
+                        else:
+                            add_log_entry(f"Failed to fetch full details for collection: {url}", collections_status)
+
                     else:
-                        add_log_entry(f"Unrecognized URL format: {url}", collections_status)
-                        return {'user_id': extracted_user_id, 'collections': []}
-                    
-                    return {'user_id': extracted_user_id, 'collections': []}
-                    
+                        add_log_entry(f"URL format not recognized as collection or user page: {url}", collections_status)
+
+                    return {'user_id': extracted_user_id, 'collections': collections_found_in_url}
+
                 except Exception as e:
                     add_log_entry(f"Error processing URL {url}: {str(e)}", collections_status)
-                    return {'user_id': None, 'collections': []}
-            
+                    # Ensure user_id is extracted even if processing fails later
+                    extracted_user_id = extract_user_id_from_url(url)
+                    return {'user_id': extracted_user_id, 'collections': []}
+
             # Submit all URLs to the thread pool
             future_to_url = {executor.submit(process_url, url): url for url in collection_urls}
-            
+
             # Process results as they complete
             for future in concurrent.futures.as_completed(future_to_url):
+                processed_urls += 1
                 try:
                     # Get the URL that this future was processing
                     url = future_to_url[future]
                     # Get the result from the future
                     result = future.result()
-                    
-                    if result:
-                        # Extract collections from result
-                        if result['collections']:
-                            # Ensure user ID is properly set in each collection
-                            for collection in result['collections']:
-                                if result['user_id']:
-                                    if 'creator' not in collection:
-                                        collection['creator'] = {}
-                                    if 'id' not in collection['creator'] or not collection['creator']['id']:
-                                        collection['creator']['id'] = result['user_id']
-                            
-                            all_collections.extend(result['collections'])
-                        
-                        # Update user ID if we found one
+
+                    if result and result['collections']:
+                        # Add successfully fetched collections to the main list
+                        all_collections.extend(result['collections'])
+                        # Update the primary user ID if found and not set yet
                         if not user_id and result['user_id']:
                             user_id = result['user_id']
                             add_log_entry(f"Updated primary user ID to: {user_id}", collections_status)
-                    
-                    # Update progress
-                    processed_urls += 1
+
+                    # Update progress based on processed URLs
                     with collections_lock:
-                        collections_status['progress'] = processed_urls / len(collection_urls)
                         collections_status['collections_completed'] = processed_urls
-                        
+                        # Update found count based on the current length of all_collections
+                        collections_status['collections_found'] = len(all_collections)
+                        collections_status['progress'] = processed_urls / len(collection_urls)
+
                 except Exception as e:
-                    add_log_entry(f"Error processing URL result: {str(e)}", collections_status)
-        
-        # Ensure all collections have the user ID properly set
+                    add_log_entry(f"Error processing result for URL {future_to_url[future]}: {str(e)}", collections_status)
+
+        # Ensure all collections have the user ID properly set if one was determined
         if user_id:
             for collection in all_collections:
-                if 'creator' not in collection:
+                if 'creator' not in collection or not collection['creator']:
                     collection['creator'] = {}
                 if 'id' not in collection['creator'] or not collection['creator']['id']:
                     collection['creator']['id'] = user_id
-        
+                    # Optionally add display name if missing and we have a user_id
+                    if 'display_name' not in collection['creator'] or not collection['creator']['display_name']:
+                         collection['creator']['display_name'] = f"User {user_id}"
+
+
         # Save the results
         with collections_lock:
             collections_status['results'] = all_collections
             collections_status['status'] = 'completed'
             collections_status['progress'] = 1.0
-            collections_status['collections_completed'] = processed_urls
-            collections_status['collections_found'] = len(all_collections)
-        
-        add_log_entry(f"Public collections scraping completed. Found {len(all_collections)} collections with user ID: {user_id}", collections_status)
-        
+            collections_status['collections_completed'] = processed_urls # Should be equal to len(collection_urls)
+            collections_status['collections_found'] = len(all_collections) # Final count
+
+        add_log_entry(f"Public collections scraping completed. Found {len(all_collections)} collections. Primary user ID: {user_id}", collections_status)
+
         # Save collections data to files if there are results, with explicit user_id
         if all_collections:
+            # Pass the determined user_id to save_collections_data
             collections_manager.save_collections_data(all_collections, user_id)
-        
+
     except Exception as e:
         # Handle any uncaught exceptions
         error_msg = str(e)
         logger.error(f"Error in public collections thread: {error_msg}")
         add_log_entry(f"Error: {error_msg}", collections_status)
-        
+
         with collections_lock:
             collections_status['status'] = 'error'
             collections_status['error'] = error_msg
@@ -418,6 +378,11 @@ def enhance_collections_thread(collections_file, user_id):
                     enhanced_count += 1
                     continue
                 
+                # Ensure we have tours array
+                if 'tours' not in collection or collection['tours'] is None:
+                    collection['tours'] = []
+                    add_log_entry(f"Adding empty tours array to collection '{collection.get('name', 'Unknown')}'", collections_status)
+                
                 # Only enhance if the collection has a URL
                 if 'url' not in collection:
                     add_log_entry(f"Collection '{collection.get('name', 'Unknown')}' has no URL, cannot enhance.", collections_status)
@@ -467,13 +432,61 @@ def enhance_collections_thread(collections_file, user_id):
         # Save the enhanced collections back to file with _enhanced suffix
         add_log_entry(f"Enhancement completed. Enhanced {total_enhanced_tours} tours across {enhanced_count} collections.", collections_status)
         
+        # Serialize collections for JSON
+        clean_collections = []
+        for collection in enhanced_collections:
+            try:
+                # Create a serializable copy
+                clean_collection = {}
+                # Basic fields
+                for field in ['id', 'name', 'url', 'type', 'description', 'tours_count', 'slug', 'cover_image_url', 'expected_tours_count', 'is_enhanced']:
+                    if field in collection and collection[field] is not None:
+                        clean_collection[field] = collection[field]
+                
+                # Creator info
+                if 'creator' in collection and collection['creator']:
+                    clean_collection['creator'] = {}
+                    if 'id' in collection['creator']:
+                        clean_collection['creator']['id'] = collection['creator']['id']
+                    if 'display_name' in collection['creator']:
+                        clean_collection['creator']['display_name'] = collection['creator']['display_name']
+                    
+                # Clean tours
+                if 'tours' in collection and collection['tours']:
+                    clean_collection['tours'] = []
+                    for tour in collection['tours']:
+                        clean_tour = {}
+                        for field in ['id', 'name', 'url', 'distance', 'distance_km', 'duration', 
+                                     'duration_hours', 'elevation_up', 'elevation_down', 'date', 'sport', 'type']:
+                            if field in tour and tour[field] is not None:
+                                clean_tour[field] = tour[field]
+                        clean_collection['tours'].append(clean_tour)
+                else:
+                    clean_collection['tours'] = []
+                    
+                clean_collections.append(clean_collection)
+                
+            except Exception as e:
+                # If a collection can't be serialized, log the error but continue
+                add_log_entry(f"Error serializing collection: {str(e)}", collections_status)
+                # Try to add a minimal version of the collection
+                try:
+                    minimal_collection = {
+                        'id': collection.get('id', 'unknown'),
+                        'name': collection.get('name', 'Unknown Collection'),
+                        'tours': []
+                    }
+                    clean_collections.append(minimal_collection)
+                except:
+                    pass
+        
         # Save collections data to files with user_id
         collections_manager.set_user_id(user_id)
-        collections_manager.save_collections_data(enhanced_collections, user_id, enhance_tours=True)
+        collections_manager.save_collections_data(clean_collections, user_id, enhance_tours=True)
         
         # Update status with results
         with collections_lock:
-            collections_status['results'] = enhanced_collections
+            collections_status['results'] = clean_collections
             collections_status['status'] = 'completed'
             collections_status['progress'] = 1.0
             collections_status['collections_completed'] = len(collections)
@@ -514,9 +527,59 @@ def download_collection_tours_thread(collections, output_dir, include_metadata, 
         # Create anonymous adapter for downloading
         adapter = KomootAdapter()
         
-        # Get total tour count across all collections
-        total_tours = sum(len(collection.get('tours', [])) for collection in collections)
-        total_collections = len(collections)
+        # First, we need to ensure all collections have tours
+        # If a collection has missing or empty tours array, fetch them first
+        collections_with_tours = []
+        collections_missing_tours = []
+        
+        for collection in collections:
+            if 'tours' not in collection or not collection.get('tours'):
+                # This collection needs tours to be fetched
+                collections_missing_tours.append(collection)
+                if 'url' not in collection:
+                    add_log_entry(f"Collection {collection.get('name', collection.get('id', 'Unknown'))} has no URL, cannot fetch tours", processing_status)
+                    # Add an empty tours array so processing can continue
+                    collection['tours'] = []
+                    collections_with_tours.append(collection)
+            else:
+                collections_with_tours.append(collection)
+        
+        # Fetch tours for collections that need them
+        if collections_missing_tours:
+            add_log_entry(f"Found {len(collections_missing_tours)} collections without tours data. Fetching tours...", processing_status)
+            
+            for collection in collections_missing_tours:
+                try:
+                    if 'url' in collection:
+                        add_log_entry(f"Fetching tours for collection: {collection.get('name', collection.get('id'))}", processing_status)
+                        full_collection = fetch_all_tours_from_collection(adapter, collection['url'], processing_status)
+                        if full_collection and 'tours' in full_collection and full_collection['tours']:
+                            collection['tours'] = full_collection['tours']
+                            collection['tours_count'] = len(full_collection['tours'])
+                            add_log_entry(f"Fetched {len(full_collection['tours'])} tours for collection: {collection.get('name', collection.get('id'))}", processing_status)
+                            # Add to collections with tours if not already there
+                            if collection not in collections_with_tours:
+                                collections_with_tours.append(collection)
+                        else:
+                            add_log_entry(f"No tours found for collection: {collection.get('name', collection.get('id'))}", processing_status)
+                            # Ensure collection has at least an empty tours array
+                            if 'tours' not in collection:
+                                collection['tours'] = []
+                            # Add to collections with tours if not already there
+                            if collection not in collections_with_tours:
+                                collections_with_tours.append(collection)
+                except Exception as e:
+                    add_log_entry(f"Error fetching tours for collection {collection.get('name', collection.get('id'))}: {str(e)}", processing_status)
+                    # Ensure collection has at least an empty tours array
+                    if 'tours' not in collection:
+                        collection['tours'] = []
+                    # Add to collections with tours if not already there
+                    if collection not in collections_with_tours:
+                        collections_with_tours.append(collection)
+        
+        # Recalculate total tours after fetching missing data
+        total_tours = sum(len(collection.get('tours', [])) for collection in collections_with_tours)
+        total_collections = len(collections_with_tours)
         
         with processing_lock:
             processing_status['tours_found'] = total_tours
@@ -530,7 +593,7 @@ def download_collection_tours_thread(collections, output_dir, include_metadata, 
         
         # If no user_id was provided, try to extract it from the first collection
         if not user_id:
-            for collection in collections:
+            for collection in collections_with_tours:
                 if 'creator' in collection and 'id' in collection['creator']:
                     user_id = collection['creator']['id']
                     add_log_entry(f"Using creator ID from collection as primary user ID: {user_id}", processing_status)
@@ -770,7 +833,7 @@ def download_collection_tours_thread(collections, output_dir, include_metadata, 
                                 # Update progress
                                 with processing_lock:
                                     processing_status['tours_completed'] = completed_tours
-                                    processing_status['progress'] = completed_tours / total_tours
+                                    processing_status['progress'] = completed_tours / total_tours if total_tours > 0 else 1.0
                     
                     # Create a summary file for this collection
                     try:
@@ -855,7 +918,7 @@ def download_collection_tours_thread(collections, output_dir, include_metadata, 
                         used_fields = set()
                         for tour in csv_tours:
                             for field, value in tour.items():
-                                if value:
+                                if value not in (None, ""):
                                     used_fields.add(field)
                         
                         # Always include essential fields
@@ -864,7 +927,7 @@ def download_collection_tours_thread(collections, output_dir, include_metadata, 
                             used_fields.add(field)
                         
                         # Filter fieldnames to only include fields that have data
-                        filtered_fieldnames = [f for f in fieldnames if f in used_fields]
+                        filtered_fieldnames = [f for f in fieldnames if f in used_fields or f in essential_fields]
                         
                         with open(csv_path, 'w', encoding='utf-8', newline='') as csvfile:
                             writer = csv.DictWriter(csvfile, fieldnames=filtered_fieldnames, extrasaction='ignore')
@@ -891,7 +954,7 @@ def download_collection_tours_thread(collections, output_dir, include_metadata, 
             
             # Submit all collections to the thread pool
             collection_futures = {}
-            for collection_idx, collection in enumerate(collections):
+            for collection_idx, collection in enumerate(collections_with_tours):
                 collection_futures[executor_collections.submit(process_collection, collection_idx, collection)] = collection
             
             # Process results as they complete
@@ -925,6 +988,227 @@ def download_collection_tours_thread(collections, output_dir, include_metadata, 
         with processing_lock:
             processing_status['status'] = 'error'
             processing_status['error'] = error_msg
+
+def fetch_all_tours_from_collection(adapter, collection_url, status_dict=None):
+    """
+    Fetch all tours from a collection, handling pagination and API limitations
+    
+    Args:
+        adapter: KomootAdapter instance
+        collection_url: URL of the collection to fetch
+        status_dict: Optional status dictionary for logging progress
+        
+    Returns:
+        Complete collection object with all tours or None if failed
+    """
+    try:
+        # Extract collection ID from URL
+        collection_id = extract_collection_id_from_url(collection_url)
+        if not collection_id:
+            if status_dict:
+                add_log_entry(f"Invalid collection URL: {collection_url}", status_dict)
+            return None
+            
+        if status_dict:
+            add_log_entry(f"Fetching collection {collection_id} from URL: {collection_url}", status_dict)
+            
+        # First, try to get collection data directly
+        collection = None
+        
+        try:
+            collection = adapter.fetch_collection_by_url(collection_url)
+            if status_dict:
+                if collection:
+                    tour_count = len(collection.get('tours', []))
+                    add_log_entry(f"Successfully fetched collection data for {collection_id} with {tour_count} tours", status_dict)
+                else:
+                    add_log_entry(f"Collection data was empty for {collection_id}", status_dict)
+        except Exception as e:
+            if status_dict:
+                add_log_entry(f"Error fetching collection by URL: {str(e)}", status_dict)
+            return None
+        
+        if not collection:
+            if status_dict:
+                add_log_entry(f"Could not fetch collection {collection_id}", status_dict)
+            return None
+        
+        # Log collection details for debugging
+        name = collection.get('name', f"Collection {collection_id}")
+        tour_count = len(collection.get('tours', []))
+        expected_count = collection.get('expected_tours_count', 0)
+        
+        if status_dict:
+            add_log_entry(f"Collection: {name}, Tours found: {tour_count}, Expected: {expected_count}", status_dict)
+        
+        # Ensure tours array exists in collection - add empty one if missing
+        if 'tours' not in collection:
+            collection['tours'] = []
+            if status_dict:
+                add_log_entry(f"Warning: Collection {collection_id} had no tours array, adding empty one", status_dict)
+        
+        # Ensure tours array is not None
+        if collection['tours'] is None:
+            collection['tours'] = []
+            if status_dict:
+                add_log_entry(f"Warning: Collection {collection_id} had None tours array, replacing with empty array", status_dict)
+            
+        # Get any already collected tours
+        existing_tour_ids = {tour['id'] for tour in collection['tours']} if collection['tours'] else set()
+        
+        # Check if we need to get more tours
+        expected_count = collection.get('expected_tours_count', 0)
+        if expected_count > len(existing_tour_ids):
+            if status_dict:
+                add_log_entry(f"Collection has {len(existing_tour_ids)} tours but expecting {expected_count}. Fetching more...", status_dict)
+                
+            # Try to extract more tours from the page with different parameters
+            additional_tours = []
+            
+            # Try different page sizes
+            for page_size in [50, 100, 200]:
+                try:
+                    page_url = f"{collection_url}?size={page_size}"
+                    if status_dict:
+                        add_log_entry(f"Trying to fetch more tours with page size {page_size} from {page_url}", status_dict)
+                        
+                    page_tours = adapter.extract_tours_from_collection_page(page_url)
+                    if page_tours:
+                        if status_dict:
+                            add_log_entry(f"Found {len(page_tours)} tours on page with size {page_size}", status_dict)
+                        
+                        # Add only new tours
+                        new_count = 0
+                        for tour in page_tours:
+                            if tour['id'] not in existing_tour_ids:
+                                additional_tours.append(tour)
+                                existing_tour_ids.add(tour['id'])
+                                new_count += 1
+                                
+                        if status_dict and new_count > 0:
+                            add_log_entry(f"Added {new_count} new tours from page size {page_size}", status_dict)
+                            
+                        # If we've reached expected count, stop trying
+                        if len(existing_tour_ids) >= expected_count or len(additional_tours) > 50:
+                            break
+                except Exception as e:
+                    if status_dict:
+                        add_log_entry(f"Error fetching additional tours with page size {page_size}: {str(e)}", status_dict)
+            
+            # Try pagination if still missing tours
+            if expected_count > len(existing_tour_ids):
+                if status_dict:
+                    add_log_entry(f"Trying pagination - found {len(existing_tour_ids)} tours but expecting {expected_count}", status_dict)
+                
+                page = 2  # Start from page 2 since we already processed page 1
+                max_pages = 10  # Safety limit
+                
+                while len(existing_tour_ids) < expected_count and page <= max_pages:
+                    try:
+                        page_url = f"{collection_url}?page={page}"
+                        if status_dict:
+                            add_log_entry(f"Trying page {page}: {page_url}", status_dict)
+                        
+                        page_tours = adapter.extract_tours_from_collection_page(page_url)
+                        if not page_tours:
+                            if status_dict:
+                                add_log_entry(f"No tours found on page {page}, stopping pagination", status_dict)
+                            break
+                        
+                        if status_dict:
+                            add_log_entry(f"Found {len(page_tours)} tours on page {page}", status_dict)
+                            
+                        # Add only new tours
+                        new_count = 0
+                        for tour in page_tours:
+                            if tour['id'] not in existing_tour_ids:
+                                additional_tours.append(tour)
+                                existing_tour_ids.add(tour['id'])
+                                new_count += 1
+                                
+                        if status_dict and new_count > 0:
+                            add_log_entry(f"Added {new_count} new tours from page {page}", status_dict)
+                            
+                        # If no new tours found on this page, stop
+                        if new_count == 0:
+                            if status_dict:
+                                add_log_entry(f"No new tours found on page {page}, stopping pagination", status_dict)
+                            break
+                            
+                        page += 1
+                    except Exception as e:
+                        if status_dict:
+                            add_log_entry(f"Error processing page {page}: {str(e)}", status_dict)
+                        break
+            
+            # Add the additional tours to the collection
+            if additional_tours:
+                collection['tours'].extend(additional_tours)
+                if status_dict:
+                    add_log_entry(f"Added total of {len(additional_tours)} additional tours to collection. Total tours: {len(collection['tours'])}", status_dict)
+                    
+            # Update the tours count
+            collection['tours_count'] = len(collection['tours'])
+        
+        # Try to enhance the first few tours with complete data
+        if collection['tours']:
+            tour_limit = min(5, len(collection['tours']))  # Only enhance up to 5 tours for performance
+            enhanced_count = 0
+            
+            if status_dict:
+                add_log_entry(f"Attempting to enhance {tour_limit} sample tours with full details", status_dict)
+            
+            for i in range(tour_limit):
+                try:
+                    tour = collection['tours'][i]
+                    tour_id = tour['id']
+                    tour_name = tour.get('name', f"Tour {tour_id}")
+                    
+                    # Only enhance if tour appears to need it
+                    if tour_name.startswith(f"Tour {tour_id}") or 'distance_km' not in tour:
+                        if status_dict:
+                            add_log_entry(f"Enhancing tour {i+1}/{tour_limit}: {tour_id}", status_dict)
+                        
+                        # First try HTML scraping as it's faster
+                        enhanced = False
+                        try:
+                            tour_data = adapter._scrape_tour_page(tour_id)
+                            if tour_data and 'name' in tour_data and tour_data['name'] != f"Tour {tour_id}":
+                                # Update with better data
+                                for key, value in tour_data.items():
+                                    if key not in tour or not tour[key]:
+                                        tour[key] = value
+                                enhanced = True
+                                enhanced_count += 1
+                        except Exception as e:
+                            if status_dict:
+                                add_log_entry(f"Error scraping tour {tour_id}: {str(e)}", status_dict)
+                        
+                        if not enhanced:
+                            if status_dict:
+                                add_log_entry(f"Could not enhance tour {tour_id} with scraping", status_dict)
+                except Exception as e:
+                    if status_dict:
+                        add_log_entry(f"Error enhancing tour: {str(e)}", status_dict)
+            
+            if status_dict and enhanced_count > 0:
+                add_log_entry(f"Enhanced {enhanced_count}/{tour_limit} sample tours with additional details", status_dict)
+        
+        # Ensure URL is present in collection metadata
+        if 'url' not in collection:
+            collection['url'] = collection_url
+            
+        # Log final collection state
+        if status_dict:
+            add_log_entry(f"Final collection '{collection.get('name')}' contains {len(collection.get('tours', []))} tours", status_dict)
+            
+        return collection
+        
+    except Exception as e:
+        logger.error(f"Error in fetch_all_tours_from_collection: {str(e)}")
+        if status_dict:
+            add_log_entry(f"Error fetching all tours from collection: {str(e)}", status_dict)
+        return None
 
 # Collections-specific route handlers
 def register_collection_routes(app, _globals):
@@ -1112,50 +1396,74 @@ def register_collection_routes(app, _globals):
             # Get the timestamp for all records
             current_timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
+            # Check if we have tours
+            if 'tours' not in collection or not collection.get('tours'):
+                return jsonify({'error': f'No tours found in collection {collection_name}'}), 404
+            
             # Process tours
             csv_tours = []
+            logger.info(f"Processing {len(collection.get('tours', []))} tours for CSV export")
+            
             for tour in collection.get('tours', []):
-                # Create standardized tour object
-                distance_km = tour.get('distance_km', tour.get('distance', 0)/1000 if tour.get('distance', 0) else 0)
-                
-                csv_tour = {
-                    "id": tour.get('id', ''),
-                    "timestamp": current_timestamp,
-                    "name": tour.get('name', f"Tour {tour.get('id', 'unknown')}"),
-                    "distance_km": f"{distance_km:.1f}" if distance_km else "",
-                    "distance_mi": f"{distance_km * 0.621371:.1f}" if distance_km else "",
-                    "duration": f"{tour.get('duration_hours', tour.get('duration', 0)/3600):.1f}" if tour.get('duration', 0) else "",
-                    "unpaved_percentage": tour.get('unpaved_percentage', ''),
-                    "singletrack_percentage": tour.get('singletrack_percentage', ''),
-                    "rideable_percentage": tour.get('rideable_percentage', ''),
-                    "total_ascent": tour.get('elevation_up', ''),
-                    "total_descent": tour.get('elevation_down', ''),
-                    "high_point": tour.get('high_point', ''),
-                    "country": tour.get('country', ''),
-                    "region": collection.get('region', ''),
-                    "collection_name": collection.get('name', ''),
-                    "collection_id": collection.get('id', ''),
-                    "sport_type": tour.get('sport', ''),
-                    "description": tour.get('description', ''),
-                    "url": tour.get('url', f"https://www.komoot.com/tour/{tour.get('id', '')}"),
-                    "gpx_url": tour.get('gpx_url', ''),
-                    "image_url": tour.get('image_url', ''),
-                    "collection_cover_image": collection.get('cover_image_url', ''),
-                    "date_created": tour.get('date', '')[:10] if tour.get('date') else ''
-                }
-                
-                # Add calculated fields
-                if tour.get('elevation_up') and distance_km:
-                    try:
-                        # Calculate meters climbed per kilometer
-                        meters_per_km = float(tour['elevation_up']) / float(distance_km)
-                        csv_tour["climbing_intensity"] = f"{meters_per_km:.1f}"
-                    except:
+                try:
+                    # Create standardized tour object with proper type handling
+                    # Handle distance - convert from meters to km if needed
+                    distance_km = 0
+                    if tour.get('distance_km') is not None:
+                        distance_km = float(tour.get('distance_km'))
+                    elif tour.get('distance') is not None:
+                        distance_km = float(tour.get('distance')) / 1000
+                    
+                    # Handle duration - convert from seconds to hours if needed
+                    duration_hours = 0
+                    if tour.get('duration_hours') is not None:
+                        duration_hours = float(tour.get('duration_hours'))
+                    elif tour.get('duration') is not None:
+                        duration_hours = float(tour.get('duration')) / 3600
+                    
+                    csv_tour = {
+                        "id": tour.get('id', ''),
+                        "timestamp": current_timestamp,
+                        "name": tour.get('name', f"Tour {tour.get('id', 'unknown')}"),
+                        "distance_km": f"{distance_km:.1f}" if distance_km else "",
+                        "distance_mi": f"{distance_km * 0.621371:.1f}" if distance_km else "",
+                        "duration": f"{duration_hours:.1f}" if duration_hours else "",
+                        "unpaved_percentage": tour.get('unpaved_percentage', ''),
+                        "singletrack_percentage": tour.get('singletrack_percentage', ''),
+                        "rideable_percentage": tour.get('rideable_percentage', ''),
+                        "total_ascent": tour.get('elevation_up', ''),
+                        "total_descent": tour.get('elevation_down', ''),
+                        "high_point": tour.get('high_point', ''),
+                        "country": tour.get('country', ''),
+                        "region": collection.get('region', ''),
+                        "collection_name": collection.get('name', ''),
+                        "collection_id": collection.get('id', ''),
+                        "sport_type": tour.get('sport', ''),
+                        "description": tour.get('description', ''),
+                        "url": tour.get('url', f"https://www.komoot.com/tour/{tour.get('id', '')}"),
+                        "gpx_url": tour.get('gpx_url', ''),
+                        "image_url": tour.get('image_url', ''),
+                        "collection_cover_image": collection.get('cover_image_url', ''),
+                        "date_created": tour.get('date', '')[:10] if tour.get('date') else ''
+                    }
+                    
+                    # Add calculated fields
+                    if tour.get('elevation_up') and distance_km:
+                        try:
+                            elevation_up = float(tour.get('elevation_up'))
+                            # Calculate meters climbed per kilometer
+                            meters_per_km = elevation_up / distance_km
+                            csv_tour["climbing_intensity"] = f"{meters_per_km:.1f}"
+                        except (ValueError, TypeError) as e:
+                            logger.warning(f"Error calculating climbing intensity: {e}")
+                            csv_tour["climbing_intensity"] = ""
+                    else:
                         csv_tour["climbing_intensity"] = ""
-                else:
-                    csv_tour["climbing_intensity"] = ""
-                        
-                csv_tours.append(csv_tour)
+                    
+                    csv_tours.append(csv_tour)
+                except Exception as tour_error:
+                    logger.error(f"Error processing tour {tour.get('id', 'unknown')}: {str(tour_error)}")
+                    # Continue with next tour instead of failing entire export
             
             # Write the CSV file - only include fields that have data
             if csv_tours:
@@ -1163,15 +1471,29 @@ def register_collection_routes(app, _globals):
                 used_fields = set()
                 for tour in csv_tours:
                     for field, value in tour.items():
-                        if value:
+                        if value not in (None, ""):
                             used_fields.add(field)
                 
-                # Filter fieldnames to only include fields that have data
-                filtered_fieldnames = [f for f in fieldnames if f in used_fields or f in ('id', 'name', 'url')]
+                # Always include essential fields
+                essential_fields = ["id", "name", "url", "timestamp"]
+                for field in essential_fields:
+                    used_fields.add(field)
                 
-                with csv.DictWriter(csv_buffer, fieldnames=filtered_fieldnames, extrasaction='ignore') as writer:
-                    writer.writeheader()
-                    writer.writerows(csv_tours)
+                # Filter fieldnames to only include fields that have data
+                filtered_fieldnames = [f for f in fieldnames if f in used_fields or f in essential_fields]
+                
+                try:
+                    with csv.DictWriter(csv_buffer, fieldnames=filtered_fieldnames, extrasaction='ignore') as writer:
+                        writer.writeheader()
+                        writer.writerows(csv_tours)
+                        
+                    logger.info(f"Successfully wrote {len(csv_tours)} tours to CSV")
+                except Exception as csv_error:
+                    logger.error(f"Error writing CSV data: {str(csv_error)}")
+                    return jsonify({'error': f'Error generating CSV: {str(csv_error)}'}), 500
+            else:
+                logger.warning("No tour data available to write to CSV")
+                return jsonify({'error': 'No valid tour data found to export'}), 404
             
             # Reset file pointer to beginning
             csv_buffer.seek(0)
@@ -1213,16 +1535,6 @@ def register_collection_routes(app, _globals):
             # Get user ID from request if available
             user_id = data.get('userId')
             
-            # If user_id is not in request, try to extract it from the first collection URL
-            if not user_id:
-                for collection in collections:
-                    if 'url' in collection:
-                        extracted_id = extract_user_id_from_url(collection['url'])
-                        if extracted_id:
-                            user_id = extracted_id
-                            logger.info(f"Extracted user ID from collection URL: {user_id}")
-                            break
-            
             # GPX options
             gpx_options = data.get('gpxOptions', {})
             
@@ -1232,12 +1544,17 @@ def register_collection_routes(app, _globals):
             # Reset status
             with processing_lock:
                 reset_status(processing_status)
-                
-            # Start background thread
-            threading.Thread(
-                target=download_collection_tours_thread,
-                args=(collections, output_dir, include_metadata, output_dir_structure, download_images, gpx_options, user_id)
-            ).start()
+            
+            # Use the CollectionManager to start the download process
+            collections_manager.download_collection_tours(
+                collections=collections,
+                output_dir=output_dir,
+                include_metadata=include_metadata,
+                output_dir_structure=output_dir_structure,
+                download_images=download_images,
+                gpx_options=gpx_options,
+                user_id=user_id
+            )
             
             return jsonify({'success': True, 'message': 'Collection tours download started'})
             

@@ -4,8 +4,14 @@ import logging
 import threading
 import os
 import re
+import time
+import json
+import csv
+import sys
+import importlib.util
 import subprocess
 import concurrent.futures
+import requests
 from flask import Flask, request, jsonify, send_file, send_from_directory, render_template
 from flask_cors import CORS
 from pathlib import Path
@@ -249,6 +255,60 @@ class CollectionManager:
         """Set the user ID for organization"""
         self.user_id = user_id
     
+    def download_collection_tours(self, collections, output_dir, include_metadata=True, 
+                                 output_dir_structure='collection', download_images=False, 
+                                 gpx_options=None, user_id=None):
+        """
+        Download tours from the given collections as GPX files
+        
+        Args:
+            collections: List of collections containing tours to download
+            output_dir: Base directory to save GPX files
+            include_metadata: Whether to save collection metadata
+            output_dir_structure: Directory structure for organizing downloads
+            download_images: Whether to download tour images
+            gpx_options: Options for GPX file generation
+            user_id: User ID for organization
+            
+        Returns:
+            Dict with download results information
+        """
+        if not gpx_options:
+            gpx_options = {}
+            
+        # If no user_id was provided, try to extract it from collections
+        if not user_id:
+            for collection in collections:
+                if 'creator' in collection and 'id' in collection['creator']:
+                    user_id = collection['creator']['id']
+                    logger.info(f"Using creator ID from collection as user ID: {user_id}")
+                    break
+                    
+                # If still no user ID, try to extract from URL
+                if collection.get('url'):
+                    extracted_id = extract_user_id_from_url(collection.get('url'))
+                    if extracted_id:
+                        user_id = extracted_id
+                        logger.info(f"Extracted user ID from collection URL: {user_id}")
+                        break
+        
+        # Set user ID for organization if found
+        if user_id:
+            self.set_user_id(user_id)
+            
+        # Start the background thread for downloading
+        thread = threading.Thread(
+            target=collections_module.download_collection_tours_thread,
+            args=(collections, output_dir, include_metadata, output_dir_structure, 
+                 download_images, gpx_options, user_id)
+        )
+        thread.start()
+        
+        return {
+            'status': 'started',
+            'message': f'Started downloading tours from {len(collections)} collections'
+        }
+    
     def save_collections_data(self, collections, user_id=None, enhance_tours=False):
         """
         Save collections data to files with user ID if available
@@ -284,6 +344,12 @@ class CollectionManager:
             
             # Create a timestamp for filenames
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Ensure all collections have a tours array if not present
+            for collection in collections:
+                if 'tours' not in collection:
+                    collection['tours'] = []
+                    logger.warning(f"Collection {collection.get('id', 'unknown')} had no tours array, adding empty one")
             
             # Save collections to JSON files
             status_suffix = "_enhanced" if enhance_tours else "_basic"
@@ -330,15 +396,24 @@ class CollectionManager:
                         f.write(f"Creator: {collection['creator']['display_name']}\n")
                     if 'description' in collection and collection['description']:
                         f.write(f"\nDescription:\n{collection['description']}\n")
+                    
+                    # Add tour summary information
+                    if 'tours' in collection and collection['tours']:
+                        f.write(f"\nTours in this collection ({len(collection['tours'])}):\n")
+                        for i, tour in enumerate(collection['tours'], 1):
+                            tour_name = tour.get('name', f"Tour {tour.get('id', 'unknown')}")
+                            tour_distance = f"{tour.get('distance_km', tour.get('distance', 0)/1000 if tour.get('distance', 0) else 0):.1f}km" if tour.get('distance_km') or tour.get('distance') else "unknown distance"
+                            f.write(f"{i}. {tour_name} ({tour_distance})\n")
                 
                 # Export tours as CSV
                 if 'tours' in collection and collection['tours']:
                     import csv
                     csv_path = collection_dir / f"{slug}_tours.csv"
                     
-                    # Define fields to include in the CSV
+                    # Define fields to include in the CSV - add more fields for comprehensive data
                     fields = ['id', 'name', 'url', 'sport', 'distance_km', 'duration', 
-                             'elevation_up', 'elevation_down', 'date', 'region']
+                             'elevation_up', 'elevation_down', 'date', 'region', 
+                             'unpaved_percentage', 'singletrack_percentage']
                     
                     with open(csv_path, 'w', encoding='utf-8', newline='') as csvfile:
                         writer = csv.DictWriter(csvfile, fieldnames=fields, extrasaction='ignore')
@@ -346,6 +421,9 @@ class CollectionManager:
                         for tour in collection['tours']:
                             # Make sure all fields are present even if empty
                             row = {field: tour.get(field, '') for field in fields}
+                            # Calculate distance_km if it's not directly available but distance is
+                            if not row['distance_km'] and tour.get('distance'):
+                                row['distance_km'] = tour.get('distance') / 1000
                             writer.writerow(row)
             
             # Create Jekyll _config.yml file
@@ -489,10 +567,10 @@ def create_user_index_html(user_id, user_name=None):
 collections_manager = CollectionManager()
 
 # Import tours module functions that collections module needs
+import tours
 from tours import extract_tours_from_html, fetch_all_tours_from_collection
 
 # Initialize tours module
-import tours
 tours.logger = logger
 tours.KOMOOTGPX_AVAILABLE = KOMOOTGPX_AVAILABLE
 tours.BS4_AVAILABLE = BS4_AVAILABLE
@@ -506,12 +584,8 @@ tours.sanitize_filename = sanitize_filename
 tours.make_request_with_retry = make_request_with_retry
 tours.extract_collection_id_from_url = extract_collection_id_from_url
 
-# Import the collections module using a direct import from the current directory
-# to avoid collision with the built-in collections module
-import sys, os
+# Import the collections module using a direct import to avoid collision with the built-in collections module
 import importlib.util
-
-# Use absolute path to find the collections module
 collections_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'collections.py')
 collections_spec = importlib.util.spec_from_file_location("collections_module", collections_path)
 collections_module = importlib.util.module_from_spec(collections_spec)
@@ -574,6 +648,33 @@ def api_select_folder():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
+@app.route('/api/stop-process', methods=['POST'])
+def stop_process():
+    """Stop any running processes"""
+    try:
+        with processing_lock:
+            # Reset status to idle
+            if processing_status['status'] == 'running':
+                processing_status['status'] = 'idle'
+                processing_status['error'] = 'Process stopped by user'
+                add_log_entry('Process stopped by user', processing_status)
+                logger.info('Process stopped by user')
+        
+        # Also check collections status
+        with collections_lock:
+            if collections_status['status'] == 'running':
+                collections_status['status'] = 'idle'
+                collections_status['error'] = 'Process stopped by user'
+                add_log_entry('Process stopped by user', collections_status)
+                logger.info('Collections process stopped by user')
+                
+        # Return success response
+        return jsonify({'success': True, 'message': 'Process stopped successfully'})
+    except Exception as e:
+        logger.error(f"Error stopping process: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 # Register tour routes
 tours.register_tour_routes(app)
 
@@ -594,9 +695,11 @@ collections_module.register_collection_routes(app, {
     'make_request_with_retry': make_request_with_retry,
     'get_default_output_dir': get_default_output_dir,
     'get_collection_slug': get_collection_slug,
-    'sanitize_filename': sanitize_filename
+    'sanitize_filename': sanitize_filename,
+    'extract_tours_from_html': extract_tours_from_html,
+    'fetch_all_tours_from_collection': fetch_all_tours_from_collection
 })
 
 # Run Flask app if this is the main module
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5001)
+    app.run(debug=True, host='0.0.0.0', port=5003)
