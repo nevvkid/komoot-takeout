@@ -1,254 +1,50 @@
 # 🧭 komoot-takeout
-**Get your tours. They're yours.**
+**Reclaim your Tours and Collections from komoot in one click with this simple desktop app.**
 
----
+Building on [komootGPX](https://github.com/timschneeb/KomootGPX/), **komoot-takeout** lets you backup all your Tours including Highlights and personal photos, as well as all public **komoot Collections**.  
 
-**A simple desktop app to download your Tours & Collections from komoot.**
+Consider this tool a stop-gap solution created in response to komoot holding user data hostage. It's not a replacement for the platform providing native one-click export of a user's data. Komoot may lock down their API at any time, breaking this tool. **Backup your data now.** 
 
-In addition to **komootGPX** features, **komoot-takeout** lets you back up all your **komoot Collections**.  
-Built with Flask, PyWebView, and bundled into a native app using PyInstaller.
+## 🔍 Key Features
 
----
+- **One-click Tour downloads**: Returns your GPX files with Highlights as points of interest and any personal photos
+- **Batch download**: Download all of your Activities and Routes at once
+- **Custom download folder**: Choose where to save your GPX files. 
+- **Native desktop experience**: Runs as a standalone desktop application
+- **Download public Komoot Collections**: Backup all tracks in a Collection
 
 ## 🖥 Supported Platforms
 
+- **Windows (.exe):** ⬇️ [komoot-takeout.exe ](https://github.com/nevvkid/komoot-takeout/raw/1fb58e052c5b06e9c6c1fac2a3e370ed183ce96e/dist/komoot-takeout.exe)⬇️
+- **macOS (.app):** ⬇️ [komoot-takeout.app(macOS).zip](https://github.com/nevvkid/komoot-takeout/raw/b33521fb8c5da4472e847c451b918125ac5d8a2b/dist/komoot-takeout.app(macOS).zip)⬇️
+
 Only tested with Windows 11 Pro & macOS 15.x.x (Apple silicon)
-
-- ✅ **Windows (.exe) – – – – – – download here:** [komoot-takeout.exe ](https://github.com/nevvkid/komoot-takeout/raw/1fb58e052c5b06e9c6c1fac2a3e370ed183ce96e/dist/komoot-takeout.exe)
-- ✅ **macOS (.app) – – – – – – – download here:** [komoot-takeout.app(macOS).zip](https://github.com/nevvkid/komoot-takeout/raw/b33521fb8c5da4472e847c451b918125ac5d8a2b/dist/komoot-takeout.app(macOS).zip)
-
 ---
 
 ![windows 11 - screenshot](windows11-screenshot.png)
 
 ---
 
-## 🔎 About This Project
 
-This project is built on top of the excellent [komootGPX](https://github.com/timschneeb/KomootGPX/) library by [timschneeb](https://github.com/timschneeb), which provides the core functionality for downloading GPX tracks from Komoot. Our desktop app provides a user-friendly interface for downloading and managing your Komoot tracks without needing to use the command line.
+## ℹ️ About This Project
 
-The application uses:
-- **Flask**: For the backend web server
-- **PyWebView**: To create a native-looking desktop window
-- **Beautiful Soup**: For parsing Komoot web content
-- **PyInstaller**: To package everything into a standalone executable
+This project builds on the excellent [komootGPX](https://github.com/timschneeb/KomootGPX/) library by [timschneeb](https://github.com/timschneeb), which provides the core functionality for downloading GPX tracks from Komoot. The desktop app provides a user-friendly interface for downloading your Komoot files without needing to use the command line. As it was coded in a weekend with generative AI, you may encounter errors and bugs.
 
----
-
-## 🔍 Key Features
-
-- **One-click GPX downloads**: Download GPX files from Komoot with a single click
-- **Batch download**: Download multiple tracks at once
-- **Custom download folder**: Choose where to save your GPX files
-- **Native desktop experience**: Runs as a standalone desktop application
-- **No login required**: Works with publicly shared Komoot routes
-
----
-
-## 📂 Folder Management
-
-At startup, the app creates a default folder in your home directory called "komoot-takeout". You can select a different folder from within the app interface.
-
-All GPX files downloaded from Komoot will be saved to the selected folder. The application remembers your folder choice between sessions.
-
----
-
-## 📁 Project Structure
-
-```
-komoot-exporter/
-├── app.py                   # Main Flask application
-├── pywebview_app.py         # PyWebView wrapper for desktop app
-├── komoot_adapter.py        # Adapter for Komoot API integration
-├── build_app.py             # Script to build the executable
-├── /templates/  
-│   └── index.html           # Main UI template
-├── /static/                 # Static assets (optional)
-├── requirements.txt         # Project dependencies
-└── venv/                    # Virtual environment (not included in Git)
-```
-
----
-
-## 🙏 Acknowledgements
-
-- [komootGPX](https://github.com/timschneeb/KomootGPX/) library by [timschneeb](https://github.com/timschneeb) for the core Komoot API integration
 - [PyWebView](https://pywebview.flowrl.com/) for the desktop window framework
 - [Flask](https://flask.palletsprojects.com/) for the web framework
 - [Beautiful Soup](https://www.crummy.com/software/BeautifulSoup/) for HTML parsing
 - [PyInstaller](https://www.pyinstaller.org/) for executable packaging
 
----
-
 ## 🚀 Contributing
+This tool contains bugs due to being rapidly coded with the help of generative AI. Contributions are welcome. Please open an issue or a pull request. 
 
-Contributions are welcome! If you'd like to improve the project:
-
-1. Fork the repository
-2. Create a new branch (`git checkout -b feature/improvement`)
-3. Make your changes
-4. Commit your changes (`git commit -am 'Add new feature'`)
-5. Push to the branch (`git push origin feature/improvement`)
-6. Create a new Pull Request
-
----
-
-## 📃 License
-
-This project is licensed under the GNU General Public License v3.0 (GPL-3.0) to comply with the license of the komootGPX library it uses.  
-See [LICENSE](LICENSE) for more information.
-
----
-
-## 🛠 Setup Instructions
-
-### 0. Install Python (Windows)
-
-#### 1. Check if Python is installed
-Open a new terminal and try:
-
-```
-python --version
-```
-
-```
-python3 --version
-```
-
-If both fail, you need to install Python first.
-
-#### 2. Install Python correctly
-Download Python from:
-👉 https://www.python.org/downloads/windows/
-
-Important when installing: ✅ During installation, check the box that says "Add Python to PATH" at the beginning of the installer!
-
-Without this, Windows can't find python in the terminal.
-
-
-### 1. Create and activate virtual environment
-
-#### Windows
-
-```
-python -m venv venv 
-```
-
-If you are using PowerShell on Windows you need to use this...
-```
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
-```
-
-``` 
-venv\Scripts\activate
-```
-
-
-#### macOS/Linux
-
-```
-python3 -m venv venv  
-source venv/bin/activate
-```
-
----
-
-### 2. Install dependencies
-
-```
-pip install -r requirements.txt
-```
-
-If you don't have requirements.txt yet, create it with:
-
-```
-pip install flask pywebview requests beautifulsoup4 gpxpy komootgpx
-pip freeze > requirements.txt
-```
-
----
-
-## 🚀 Running in Development
-
-Make sure the virtual environment is activated.
-
-```
-python pywebview_app.py
-```
-
-To run just the Flask server without the desktop window:
-
-```
-python app.py
-```
-
-Then open in your browser:
-
-```
-http://localhost:5001/
-```
-
----
-
-## 📦 Packaging into a Desktop App
-
-### Using the build script (recommended)
-
-We provide a build script that handles all the packaging details:
-
-```
-python build_app.py
-```
-
-### Manual packaging
-
-#### Windows (Build .exe)
-
-```
-pyinstaller --noconfirm --clean --name=komoot-takeout --onefile --windowed --add-data=templates/index.html;templates --hidden-import=flask --hidden-import=komoot_adapter --hidden-import=bs4 --hidden-import=gpxpy --hidden-import=webview --hidden-import=requests --hidden-import=zipfile --hidden-import=concurrent.futures --hidden-import=komootgpx pywebview_app.py
-```
-
-#### macOS (Build .app)
-
-```
-pyinstaller --noconfirm --clean --name=komoot-takeout --onefile --windowed --add-data=templates/index.html:templates --hidden-import=flask --hidden-import=komoot_adapter --hidden-import=bs4 --hidden-import=gpxpy --hidden-import=webview --hidden-import=requests --hidden-import=zipfile --hidden-import=concurrent.futures --hidden-import=komootgpx pywebview_app.py
-```
-
-Note: On Windows use a semicolon `;`, on macOS use a colon `:` when specifying paths with --add-data.
-
-Output will be placed in the `/dist/` folder:
-
-```
-/dist/komoot-takeout.exe     (Windows)
-/dist/komoot-takeout         (macOS)
-```
-
----
-
-## ⚠ Common Errors
-
-| Problem | Solution |
-|---------|----------|
-| "python not found" | Install Python from https://www.python.org/ (version 3.6+) and ensure it's in your system PATH |
-| "DLL load failed" on Windows | Install Visual C++ Redistributable from Microsoft's website |
-| Templates not found in executable | Use the correct `--add-data` format for your OS |
-| "No module named 'xyz'" | Make sure all dependencies are properly installed, or add them to `--hidden-import` |
-| Internal Server Error | Check the log file for detailed error information |
-
----
-
-## 🐛 Troubleshooting
-
-### Log Files
-
-The application creates a log file called `komoot_exporter.log` in the directory where you run the executable. This file contains detailed information if something goes wrong.
-
-### Known Issues
+### Known issues
 
 - On some Windows systems, you may see a Rectangle.op_Equality error in the logs. This is a known issue with PyWebView and doesn't affect functionality.
 - If you have a firewall or antivirus, it might block the app from accessing the internet. Make sure to allow the app through your firewall.
 
----
+### Log Files
+The application creates a log file called `komoot_exporter.log` in the directory where you run the executable. This file contains detailed information if something goes wrong.
 
 ## ⚠ Disclaimer
 
@@ -258,9 +54,7 @@ Use this application at your own risk. The developers take no responsibility for
 
 All trademarks, logos, and brand names are the property of their respective owners.
 
+## 📃 License
 
----
-
-## 📧 Contact
-
-If you have any questions or suggestions, please open an issue on the GitHub repository.
+This project is licensed under the GNU General Public License v3.0 (GPL-3.0) to comply with the license of the komootGPX library it uses.  
+See [LICENSE](LICENSE) for more information.
