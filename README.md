@@ -3,7 +3,7 @@
 
 Building on [komootGPX](https://github.com/timschneeb/KomootGPX/), **komoot-takeout** lets you backup all your Tours including Highlights and personal photos, as well as all public **komoot Collections**.  
 
-Consider this tool a stop-gap solution created in response to komoot holding user data hostage. It's not a replacement for the platform providing native one-click export of a user's data. Komoot may lock down their API at any time, breaking this tool. **Backup your data now.** 
+Consider this tool a stop-gap solution created in response to Komoot locking up our user data. It's not a replacement for the platform providing native one-click export. Be aware that Komoot may lock down their API at any time, breaking this tool. **Backup your data now.** 
 
 ## 🔍 Key Features
 
@@ -40,6 +40,7 @@ This tool contains bugs due to being rapidly coded with the help of generative A
 
 ### Known issues
 
+- Single Tour downloads (with login) result in an error. Recommended workaround: Download GPX file directly from Komoot. 
 - On some Windows systems, you may see a Rectangle.op_Equality error in the logs. This is a known issue with PyWebView and doesn't affect functionality.
 - If you have a firewall or antivirus, it might block the app from accessing the internet. Make sure to allow the app through your firewall.
 
