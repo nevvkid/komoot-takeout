@@ -11,7 +11,8 @@ Consider this tool a stop-gap solution created in response to Komoot locking up 
 - **Batch download**: Download all of your Activities and Routes at once
 - **Custom download folder**: Choose where to save your GPX files. 
 - **Native desktop experience**: Runs as a standalone desktop application
-- **Download public Komoot Collections**: Backup all tracks in a Collection
+- **Download public Komoot Collections**: Backup all tracks in a single or multiple Collections via the public link, and all Collections of a user (e.g. komoot.com/user/123456789/collections/personal)
+- **Tons of undocumented 🐛**: Please consult the Known Issues below and report new ones via Issues. 
 
 ## 🖥 Supported Platforms
 
@@ -24,6 +25,14 @@ Only tested with Windows 11 Pro & macOS 15.x.x (Apple silicon)
 ![windows 11 - screenshot](windows11-screenshot.png)
 
 ---
+
+### Known issues
+
+- Single Tour downloads (with login) result in an error. Recommended workaround: Download GPX file directly from Komoot. 
+- Collection Download Button becomes unclickable after downloading a collection. Workaround: Close komoot-takeout and re-open. You can paste multiple links or the link to the Collection overview (e.g. komoot.com/user/123456789/collections/personal) into the text box for batch fetching.
+- On some Windows systems, you may see a Rectangle.op_Equality error in the logs. This is a known issue with PyWebView and doesn't affect functionality.
+- If you have a firewall or antivirus, it might block the app from accessing the internet. Make sure to allow the app through your firewall.
+- Windows Defender Smartscreen may block the launching of the program because it is unsigned. Click "More information" to execute anyway. 
 
 
 ## ℹ️ About This Project
@@ -38,11 +47,6 @@ This project builds on the excellent [komootGPX](https://github.com/timschneeb/K
 ## 🚀 Contributing
 This tool contains bugs due to being rapidly coded with the help of generative AI. Contributions are welcome. Please open an issue or a pull request. 
 
-### Known issues
-
-- Single Tour downloads (with login) result in an error. Recommended workaround: Download GPX file directly from Komoot. 
-- On some Windows systems, you may see a Rectangle.op_Equality error in the logs. This is a known issue with PyWebView and doesn't affect functionality.
-- If you have a firewall or antivirus, it might block the app from accessing the internet. Make sure to allow the app through your firewall.
 
 ### Log Files
 The application creates a log file called `komoot_exporter.log` in the directory where you run the executable. This file contains detailed information if something goes wrong.
